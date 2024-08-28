@@ -5,7 +5,7 @@ cd "$( dirname "${BASH_SOURCE[0]}" )"
 
 subj="/C=GB/ST=London/L=London/O=Global Security/OU=IT Department/CN=ory.sh.local"
 openssl genrsa -out ory-ca.key 2048
-openssl req -x509 -new -nodes -key ory-ca.key -sha256 -days 4096 -out ory-ca.pem -subj "$subj"
+openssl req -x509 -new -nodes -key ory-ca.key -sha256 -days 2048 -out ory-ca.pem -subj "$subj"
 
 NAME=ory-conformity
 openssl genrsa -out $NAME.key 2048

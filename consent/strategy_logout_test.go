@@ -476,7 +476,7 @@ func TestLogoutFlows(t *testing.T) {
 
 		t.Run("case=should pass even if audience is an array not a string", func(t *testing.T) {
 			// formerly: should pass rp-inititated flow"
-			claims := jwtgo.MapClaims{"aud": []string{c.GetID()}}
+			claims := jwtgo.MapClaims{"aud": c.GetID()}
 			t.Run("method=GET", run("GET", claims))
 			t.Run("method=POST", run("POST", claims))
 		})
@@ -495,7 +495,7 @@ func TestLogoutFlows(t *testing.T) {
 			"state":                    {"1234"},
 			"post_logout_redirect_uri": {customPostLogoutURL},
 			"id_token_hint": {genIDToken(t, reg, jwtgo.MapClaims{
-				"aud": []string{c.GetID()}, // make sure this works with string slices too
+				"aud": c.GetID(), // make sure this works with string slices too
 				"iss": reg.Config().IssuerURL(ctx).String(),
 				"sub": subject,
 				"sid": "i-do-not-exist",

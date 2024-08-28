@@ -23,7 +23,7 @@ type Requester struct {
 	// GrantedScopes is the list of scopes granted to the OAuth 2.0 client.
 	GrantedScopes []string `json:"granted_scopes"`
 	// GrantedAudience is the list of audiences granted to the OAuth 2.0 client.
-	GrantedAudience []string `json:"granted_audience"`
+	GrantedAudience string `json:"granted_audience"`
 	// GrantTypes is the requests grant types.
 	GrantTypes []string `json:"grant_types"`
 }
@@ -43,7 +43,7 @@ type RefreshTokenHookRequest struct {
 	// GrantedScopes is the list of scopes granted to the OAuth 2.0 client.
 	GrantedScopes []string `json:"granted_scopes"`
 	// GrantedAudience is the list of audiences granted to the OAuth 2.0 client.
-	GrantedAudience []string `json:"granted_audience"`
+	GrantedAudience string `json:"granted_audience"`
 }
 
 // RefreshTokenHook is an AccessRequestHook called for `refresh_token` grant type.

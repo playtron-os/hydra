@@ -616,10 +616,6 @@ func (r *LoginRequest) MarshalJSON() ([]byte, error) {
 		alias.RequestedScope = []string{}
 	}
 
-	if alias.RequestedAudience == nil {
-		alias.RequestedAudience = []string{}
-	}
-
 	return json.Marshal(alias)
 }
 
@@ -703,10 +699,6 @@ func (r *OAuth2ConsentRequest) MarshalJSON() ([]byte, error) {
 	alias := Alias(*r)
 	if alias.RequestedScope == nil {
 		alias.RequestedScope = []string{}
-	}
-
-	if alias.RequestedAudience == nil {
-		alias.RequestedAudience = []string{}
 	}
 
 	if alias.AMR == nil {

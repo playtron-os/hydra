@@ -18,7 +18,7 @@ import (
 func GenerateJWK(ctx context.Context, alg jose.SignatureAlgorithm, kid, use string) (*jose.JSONWebKeySet, error) {
 	bits := 0
 	if alg == jose.RS256 || alg == jose.RS384 || alg == jose.RS512 {
-		bits = 4096
+		bits = 2048
 	}
 
 	_, priv, err := josex.NewSigningKey(alg, bits)

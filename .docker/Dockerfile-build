@@ -12,17 +12,22 @@ COPY internal/httpclient/go.* ./internal/httpclient/
 ENV GO111MODULE on
 ENV CGO_ENABLED 1
 
+COPY . .
+COPY ./fosite/go.mod ./fosite
+COPY ./fosite/go.sum ./fosite
+
 RUN go mod download
 
-COPY . .
 RUN go build -tags sqlite,json1 -o /usr/bin/hydra
 
 #########################
 
-FROM gcr.io/distroless/base-nossl-debian12:nonroot AS runner
+FROM golang:1.22 AS runner
 
 COPY --from=builder --chown=nonroot:nonroot /var/lib/sqlite /var/lib/sqlite
 COPY --from=builder /usr/bin/hydra /usr/bin/hydra
+
+RUN mkdir -p /var/lib/sqlite
 
 VOLUME /var/lib/sqlite
 

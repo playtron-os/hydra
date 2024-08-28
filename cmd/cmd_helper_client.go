@@ -17,10 +17,16 @@ import (
 )
 
 func clientFromFlags(cmd *cobra.Command) hydra.OAuth2Client {
+	audience := flagx.MustGetStringSlice(cmd, flagClientAudience)
+	aud := ""
+	if len(audience) > 0 {
+		aud = audience[0]
+	}
+
 	return hydra.OAuth2Client{
 		AccessTokenStrategy:               pointerx.Ptr(flagx.MustGetString(cmd, flagClientAccessTokenStrategy)),
 		AllowedCorsOrigins:                flagx.MustGetStringSlice(cmd, flagClientAllowedCORSOrigin),
-		Audience:                          flagx.MustGetStringSlice(cmd, flagClientAudience),
+		Audience:                          aud,
 		BackchannelLogoutSessionRequired:  pointerx.Ptr(flagx.MustGetBool(cmd, flagClientBackChannelLogoutSessionRequired)),
 		BackchannelLogoutUri:              pointerx.Ptr(flagx.MustGetString(cmd, flagClientBackchannelLogoutCallback)),
 		ClientName:                        pointerx.Ptr(flagx.MustGetString(cmd, flagClientName)),

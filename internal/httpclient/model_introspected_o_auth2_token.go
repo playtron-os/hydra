@@ -25,7 +25,7 @@ type IntrospectedOAuth2Token struct {
 	// Active is a boolean indicator of whether or not the presented token is currently active.  The specifics of a token's \"active\" state will vary depending on the implementation of the authorization server and the information it keeps about its tokens, but a \"true\" value return for the \"active\" property will generally indicate that a given token has been issued by this authorization server, has not been revoked by the resource owner, and is within its given time window of validity (e.g., after its issuance time and before its expiration time).
 	Active bool `json:"active"`
 	// Audience contains a list of the token's intended audiences.
-	Aud []string `json:"aud,omitempty"`
+	Aud string `json:"aud,omitempty"`
 	// ID is aclient identifier for the OAuth 2.0 client that requested this token.
 	ClientId *string `json:"client_id,omitempty"`
 	// Expires at is an integer timestamp, measured in the number of seconds since January 1 1970 UTC, indicating when this token will expire.
@@ -97,9 +97,9 @@ func (o *IntrospectedOAuth2Token) SetActive(v bool) {
 }
 
 // GetAud returns the Aud field value if set, zero value otherwise.
-func (o *IntrospectedOAuth2Token) GetAud() []string {
+func (o *IntrospectedOAuth2Token) GetAud() string {
 	if o == nil || IsNil(o.Aud) {
-		var ret []string
+		var ret string
 		return ret
 	}
 	return o.Aud
@@ -107,9 +107,9 @@ func (o *IntrospectedOAuth2Token) GetAud() []string {
 
 // GetAudOk returns a tuple with the Aud field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IntrospectedOAuth2Token) GetAudOk() ([]string, bool) {
+func (o *IntrospectedOAuth2Token) GetAudOk() (string, bool) {
 	if o == nil || IsNil(o.Aud) {
-		return nil, false
+		return "", false
 	}
 	return o.Aud, true
 }
@@ -123,8 +123,8 @@ func (o *IntrospectedOAuth2Token) HasAud() bool {
 	return false
 }
 
-// SetAud gets a reference to the given []string and assigns it to the Aud field.
-func (o *IntrospectedOAuth2Token) SetAud(v []string) {
+// SetAud gets a reference to the given string and assigns it to the Aud field.
+func (o *IntrospectedOAuth2Token) SetAud(v string) {
 	o.Aud = v
 }
 

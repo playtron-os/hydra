@@ -90,7 +90,7 @@ func (m *KeyManager) GenerateAndPersistKeySet(ctx context.Context, set, kid, alg
 
 	switch {
 	case alg == "RS256":
-		key, err := m.GenerateRSAKeyPairWithAttributes(publicAttrSet, privateAttrSet, 4096)
+		key, err := m.GenerateRSAKeyPairWithAttributes(publicAttrSet, privateAttrSet, 2048)
 		if err != nil {
 			return nil, err
 		}
@@ -276,7 +276,7 @@ func (m *KeyManager) getKeySetAttributes(ctx context.Context, key crypto11.Signe
 	switch k := key.Public().(type) {
 	case *rsa.PublicKey:
 		alg = "RS256"
-		if k.N.BitLen() < 4096 && !m.c.IsDevelopmentMode(ctx) {
+		if k.N.BitLen() < 2048 && !m.c.IsDevelopmentMode(ctx) {
 			return "", "", "", errors.WithStack(jwk.ErrMinimalRsaKeyLength)
 		}
 	case *ecdsa.PublicKey:

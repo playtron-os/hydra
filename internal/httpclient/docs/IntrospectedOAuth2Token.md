@@ -73,7 +73,7 @@ and a boolean to check if the value has been set.
 
 ### SetAud
 
-`func (o *IntrospectedOAuth2Token) SetAud(v []string)`
+`func (o *IntrospectedOAuth2Token) SetAud(v string)`
 
 SetAud sets Aud field to given value.
 

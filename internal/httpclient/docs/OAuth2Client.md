@@ -137,7 +137,7 @@ and a boolean to check if the value has been set.
 
 ### SetAudience
 
-`func (o *OAuth2Client) SetAudience(v []string)`
+`func (o *OAuth2Client) SetAudience(v string)`
 
 SetAudience sets Audience field to given value.
 

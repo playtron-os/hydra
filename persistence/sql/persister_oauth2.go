@@ -40,21 +40,21 @@ var _ storage.Transactional = &Persister{}
 type (
 	tableName        string
 	OAuth2RequestSQL struct {
-		ID                string         `db:"signature"`
-		NID               uuid.UUID      `db:"nid"`
-		Request           string         `db:"request_id"`
-		ConsentChallenge  sql.NullString `db:"challenge_id"`
-		RequestedAt       time.Time      `db:"requested_at"`
-		Client            string         `db:"client_id"`
-		Scopes            string         `db:"scope"`
-		GrantedScope      string         `db:"granted_scope"`
-		RequestedAudience string         `db:"requested_audience"`
-		GrantedAudience   string         `db:"granted_audience"`
-		Form              string         `db:"form_data"`
-		Subject           string         `db:"subject"`
-		Active            bool           `db:"active"`
-		Session           []byte         `db:"session_data"`
-		Table             tableName      `db:"-"`
+		ID                string                      `db:"signature"`
+		NID               uuid.UUID                   `db:"nid"`
+		Request           string                      `db:"request_id"`
+		ConsentChallenge  sql.NullString              `db:"challenge_id"`
+		RequestedAt       time.Time                   `db:"requested_at"`
+		Client            string                      `db:"client_id"`
+		Scopes            string                      `db:"scope"`
+		GrantedScope      string                      `db:"granted_scope"`
+		RequestedAudience sqlxx.StringSliceJSONFormat `db:"requested_audience"`
+		GrantedAudience   string                      `db:"granted_audience"`
+		Form              string                      `db:"form_data"`
+		Subject           string                      `db:"subject"`
+		Active            bool                        `db:"active"`
+		Session           []byte                      `db:"session_data"`
+		Table             tableName                   `db:"-"`
 		// InternalExpiresAt denormalizes the expiry from the session to additionally store it as a row.
 		InternalExpiresAt sqlxx.NullTime `db:"expires_at" json:"-"`
 	}
@@ -112,8 +112,8 @@ func (p *Persister) sqlSchemaFromRequest(ctx context.Context, signature string, 
 		Client:            r.GetClient().GetID(),
 		Scopes:            strings.Join(r.GetRequestedScopes(), "|"),
 		GrantedScope:      strings.Join(r.GetGrantedScopes(), "|"),
-		GrantedAudience:   strings.Join(r.GetGrantedAudience(), "|"),
-		RequestedAudience: strings.Join(r.GetRequestedAudience(), "|"),
+		GrantedAudience:   r.GetGrantedAudience(),
+		RequestedAudience: []string{r.GetRequestedAudience()},
 		Form:              r.GetRequestForm().Encode(),
 		Session:           session,
 		Subject:           subject,
@@ -160,8 +160,8 @@ func (r *OAuth2RequestSQL) toRequest(ctx context.Context, session fosite.Session
 		Client:            c,
 		RequestedScope:    stringsx.Splitx(r.Scopes, "|"),
 		GrantedScope:      stringsx.Splitx(r.GrantedScope, "|"),
-		RequestedAudience: stringsx.Splitx(r.RequestedAudience, "|"),
-		GrantedAudience:   stringsx.Splitx(r.GrantedAudience, "|"),
+		RequestedAudience: []string(r.RequestedAudience),
+		GrantedAudience:   []string{r.GrantedAudience},
 		Form:              val,
 		Session:           session,
 	}, nil

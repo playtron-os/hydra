@@ -6,6 +6,8 @@ toolchain go1.22.5
 
 replace github.com/ory/hydra-client-go/v2 => ./internal/httpclient
 
+replace github.com/ory/fosite => ./fosite
+
 require (
 	github.com/ThalesIgnite/crypto11 v1.2.5
 	github.com/bradleyjkemp/cupaloy/v2 v2.8.0

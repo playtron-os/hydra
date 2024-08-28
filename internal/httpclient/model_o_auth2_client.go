@@ -24,7 +24,7 @@ type OAuth2Client struct {
 	// OAuth 2.0 Access Token Strategy  AccessTokenStrategy is the strategy used to generate access tokens. Valid options are `jwt` and `opaque`. `jwt` is a bad idea, see https://www.ory.sh/docs/hydra/advanced#json-web-tokens Setting the stragegy here overrides the global setting in `strategies.access_token`.
 	AccessTokenStrategy *string  `json:"access_token_strategy,omitempty"`
 	AllowedCorsOrigins  []string `json:"allowed_cors_origins,omitempty"`
-	Audience            []string `json:"audience,omitempty"`
+	Audience            string `json:"audience,omitempty"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
 	AuthorizationCodeGrantAccessTokenLifespan *string `json:"authorization_code_grant_access_token_lifespan,omitempty"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
@@ -196,9 +196,9 @@ func (o *OAuth2Client) SetAllowedCorsOrigins(v []string) {
 }
 
 // GetAudience returns the Audience field value if set, zero value otherwise.
-func (o *OAuth2Client) GetAudience() []string {
+func (o *OAuth2Client) GetAudience() string {
 	if o == nil || IsNil(o.Audience) {
-		var ret []string
+		var ret string
 		return ret
 	}
 	return o.Audience
@@ -206,9 +206,9 @@ func (o *OAuth2Client) GetAudience() []string {
 
 // GetAudienceOk returns a tuple with the Audience field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *OAuth2Client) GetAudienceOk() ([]string, bool) {
+func (o *OAuth2Client) GetAudienceOk() (string, bool) {
 	if o == nil || IsNil(o.Audience) {
-		return nil, false
+		return "", false
 	}
 	return o.Audience, true
 }
@@ -223,7 +223,7 @@ func (o *OAuth2Client) HasAudience() bool {
 }
 
 // SetAudience gets a reference to the given []string and assigns it to the Audience field.
-func (o *OAuth2Client) SetAudience(v []string) {
+func (o *OAuth2Client) SetAudience(v string) {
 	o.Audience = v
 }
 

@@ -241,7 +241,7 @@ func (s *DefaultStrategy) forwardAuthenticationRequest(ctx context.Context, w ht
 		CSRF:              csrf,
 		Skip:              skip,
 		RequestedScope:    []string(ar.GetRequestedScopes()),
-		RequestedAudience: []string(ar.GetRequestedAudience()),
+		RequestedAudience: []string{ar.GetRequestedAudience()},
 		Subject:           subject,
 		Client:            cl,
 		RequestURL:        iu.String(),
@@ -403,8 +403,8 @@ func (s *DefaultStrategy) verifyAuthentication(
 			ID:                req.GetID(),
 			RequestedAt:       req.GetRequestedAt(),
 			Client:            req.GetClient(),
-			RequestedAudience: req.GetRequestedAudience(),
-			GrantedAudience:   req.GetGrantedAudience(),
+			RequestedAudience: []string{req.GetRequestedAudience()},
+			GrantedAudience:   []string{req.GetGrantedAudience()},
 			RequestedScope:    req.GetRequestedScopes(),
 			GrantedScope:      req.GetGrantedScopes(),
 			Form:              req.GetRequestForm(),
@@ -597,7 +597,7 @@ func (s *DefaultStrategy) forwardConsentRequest(
 		CSRF:                   csrf,
 		Skip:                   skip,
 		RequestedScope:         []string(ar.GetRequestedScopes()),
-		RequestedAudience:      []string(ar.GetRequestedAudience()),
+		RequestedAudience:      []string{ar.GetRequestedAudience()},
 		Subject:                as.Subject,
 		Client:                 cl,
 		RequestURL:             as.LoginRequest.RequestURL,
@@ -755,7 +755,7 @@ func (s *DefaultStrategy) executeBackChannelLogout(r *http.Request, subject, sid
 
 		t, _, err := s.r.OpenIDJWTStrategy().Generate(ctx, jwt.MapClaims{
 			"iss":    s.c.IssuerURL(ctx).String(),
-			"aud":    []string{c.ID},
+			"aud":    c.ID,
 			"iat":    time.Now().UTC().Unix(),
 			"jti":    uuid.New(),
 			"events": map[string]struct{}{"http://schemas.openid.net/event/backchannel-logout": {}},
@@ -913,22 +913,11 @@ func (s *DefaultStrategy) issueLogoutVerifier(ctx context.Context, w http.Respon
 	}
 
 	// Let's find the client by cycling through the audiences. Typically, we only have one audience
-	var cl *client.Client
-	for _, aud := range mapx.GetStringSliceDefault(
-		mksi,
-		"aud",
-		[]string{
-			mapx.GetStringDefault(mksi, "aud", ""),
-		},
-	) {
-		c, err := s.r.ClientManager().GetConcreteClient(r.Context(), aud)
-		if errors.Is(err, x.ErrNotFound) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		cl = c
-		break
+	aud := mapx.GetStringDefault(mksi, "aud", "")
+
+	cl, err := s.r.ClientManager().GetConcreteClient(r.Context(), aud)
+	if err != nil {
+		return nil, err
 	}
 
 	if cl == nil {

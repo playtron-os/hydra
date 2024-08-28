@@ -30,7 +30,7 @@ func (i outputOAuth2Client) Columns() []string {
 		strings.Join(i.GrantTypes, ", "),
 		strings.Join(i.ResponseTypes, ", "),
 		fmt.Sprintf("%v", pointerx.StringR(i.Scope)),
-		strings.Join(i.Audience, ","),
+		i.Audience,
 		strings.Join(i.RedirectUris, ", "),
 	}
 	return data[:]

@@ -644,22 +644,7 @@ func (h *Handler) getOidcUserInfo(w http.ResponseWriter, r *http.Request) {
 	delete(interim, "sid")
 	delete(interim, "jti")
 
-	aud, ok := interim["aud"].([]string)
-	if !ok || len(aud) == 0 {
-		aud = []string{c.GetID()}
-	} else {
-		found := false
-		for _, a := range aud {
-			if a == c.GetID() {
-				found = true
-				break
-			}
-		}
-		if !found {
-			aud = append(aud, c.GetID())
-		}
-	}
-	interim["aud"] = aud
+	interim["aud"] = c.GetID()
 
 	if c.UserinfoSignedResponseAlg == "RS256" {
 		interim["jti"] = uuid.New()
@@ -841,10 +826,6 @@ func (h *Handler) introspectOAuth2Token(w http.ResponseWriter, r *http.Request, 
 	}
 
 	audience := resp.GetAccessRequester().GetGrantedAudience()
-	if audience == nil {
-		// prevent null
-		audience = fosite.Arguments{}
-	}
 
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	if err = json.NewEncoder(w).Encode(&Introspection{
@@ -998,10 +979,9 @@ func (h *Handler) oauth2TokenExchange(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		for _, audience := range accessRequest.GetRequestedAudience() {
-			if h.r.AudienceStrategy()(accessRequest.GetClient().GetAudience(), []string{audience}) == nil {
-				accessRequest.GrantAudience(audience)
-			}
+		audience := accessRequest.GetRequestedAudience()
+		if h.r.AudienceStrategy()(accessRequest.GetClient().GetAudience(), audience) == nil {
+			accessRequest.GrantAudience(audience)
 		}
 	}
 
@@ -1121,7 +1101,7 @@ func (h *Handler) oAuth2Authorize(w http.ResponseWriter, r *http.Request, _ http
 
 		// These are required for work around https://github.com/ory/fosite/issues/530
 		Nonce:    authorizeRequest.GetRequestForm().Get("nonce"),
-		Audience: []string{authorizeRequest.GetClient().GetID()},
+		Audience: authorizeRequest.GetClient().GetID(),
 		IssuedAt: time.Now().Truncate(time.Second).UTC(),
 
 		// This is set by the fosite strategy

@@ -279,6 +279,12 @@ func (s *DefaultStrategy) forwardAuthenticationRequest(ctx context.Context, w ht
 		return err
 	}
 
+	state := stringsx.Splitx(ar.GetRequestForm().Get("state"), ",")
+	statePrompt := ""
+	if len(state) > 1 {
+		statePrompt = state[1]
+	}
+
 	var baseURL *url.URL
 	if stringslice.Has(prompt, "registration") {
 		baseURL = s.c.RegistrationURL(ctx)
@@ -286,7 +292,7 @@ func (s *DefaultStrategy) forwardAuthenticationRequest(ctx context.Context, w ht
 		baseURL = s.c.LoginURL(ctx)
 	}
 
-	http.Redirect(w, r, urlx.SetQuery(baseURL, url.Values{"login_challenge": {encodedFlow}}).String(), http.StatusFound)
+	http.Redirect(w, r, urlx.SetQuery(baseURL, url.Values{"login_challenge": {encodedFlow}, "prompt": {statePrompt}}).String(), http.StatusFound)
 
 	// generate the verifier
 	return errorsx.WithStack(ErrAbortOAuth2Request)

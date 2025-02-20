@@ -3,7 +3,7 @@ SHELL=/bin/bash -o pipefail
 export GO111MODULE 		:= on
 export PATH 					:= .bin:${PATH}
 export PWD 						:= $(shell pwd)
-export IMAGE_TAG 			:= $(if $(IMAGE_TAG),$(IMAGE_TAG),v2.2.0-3)
+export IMAGE_TAG 			:= $(if $(IMAGE_TAG),$(IMAGE_TAG),v2.2.0-4)
 
 GOLANGCI_LINT_VERSION = 1.55.2
 
@@ -71,7 +71,11 @@ test-resetdb: node_modules
 # Build local docker images
 .PHONY: docker
 docker:
-	DOCKER_BUILDKIT=1 DOCKER_CONTENT_TRUST=1 docker build --progress=plain -f .docker/Dockerfile-build -t playtron/hydra:${IMAGE_TAG} .
+	DOCKER_BUILDKIT=1 DOCKER_CONTENT_TRUST=1 docker buildx build \
+  --platform=linux/amd64 \
+  -f .docker/Dockerfile-build \
+  -t playtron/hydra:${IMAGE_TAG} \
+	.
 
 .PHONY: e2e
 e2e: node_modules test-resetdb

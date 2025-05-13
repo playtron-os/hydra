@@ -48,6 +48,7 @@ import (
 	"github.com/ory/hydra/v2/consent"
 	"github.com/ory/hydra/v2/hsm"
 	"github.com/ory/hydra/v2/jwk"
+	"github.com/ory/hydra/v2/oauth2/sessiontoken"
 	"github.com/ory/hydra/v2/oauth2/trust"
 	"github.com/ory/hydra/v2/persistence/sql"
 	"github.com/ory/hydra/v2/x"
@@ -66,6 +67,7 @@ type RegistrySQL struct {
 	conf            *config.DefaultProvider
 	ch              *client.Handler
 	fh              fosite.Hasher
+	jwtExchangeH    *sessiontoken.Handler
 	jwtGrantH       *trust.Handler
 	jwtGrantV       *trust.GrantValidator
 	kh              *jwk.Handler
@@ -326,6 +328,7 @@ func (m *RegistrySQL) RegisterRoutes(ctx context.Context, admin *httprouterx.Rou
 
 	admin.Handler("GET", prometheus.MetricsPrometheusPath, promhttp.Handler())
 
+	m.JWTTokenExchangeHandler().SetRoutes(admin)
 	m.ConsentHandler().SetRoutes(admin)
 	m.KeyHandler().SetRoutes(admin, public, m.OAuth2AwareMiddleware())
 	m.ClientHandler().SetRoutes(admin, public)
@@ -427,6 +430,13 @@ func (m *RegistrySQL) JWTGrantHandler() *trust.Handler {
 		m.jwtGrantH = trust.NewHandler(m)
 	}
 	return m.jwtGrantH
+}
+
+func (m *RegistrySQL) JWTTokenExchangeHandler() *sessiontoken.Handler {
+	if m.jwtExchangeH == nil {
+		m.jwtExchangeH = sessiontoken.NewHandler(m)
+	}
+	return m.jwtExchangeH
 }
 
 func (m *RegistrySQL) GrantValidator() *trust.GrantValidator {

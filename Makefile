@@ -3,7 +3,7 @@ SHELL=/bin/bash -o pipefail
 export GO111MODULE 		:= on
 export PATH 					:= .bin:${PATH}
 export PWD 						:= $(shell pwd)
-export IMAGE_TAG 			:= $(if $(IMAGE_TAG),$(IMAGE_TAG),v2.2.0-4)
+export IMAGE_TAG 			:= $(if $(IMAGE_TAG),$(IMAGE_TAG),v2.2.0-5)
 
 GOLANGCI_LINT_VERSION = 1.55.2
 

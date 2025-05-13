@@ -43,6 +43,7 @@ import (
 	"github.com/ory/hydra/v2/driver/config"
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/hydra/v2/oauth2/sessiontoken"
 	"github.com/ory/hydra/v2/x"
 	prometheus "github.com/ory/x/prometheusx"
 )
@@ -240,6 +241,8 @@ func setup(ctx context.Context, d driver.Registry, cmd *cobra.Command) (admin *h
 				strings.Contains(d.Config().IssuerURL(ctx).String(), "localhost"),
 			WriteKey: "h8dRH3kVCWKkIFWydBmWsyYHR4M0u0vr",
 			WhitelistedPaths: []string{
+				"/admin" + sessiontoken.IssueTokenPath,
+
 				"/admin" + jwk.KeyHandlerPath,
 				jwk.WellKnownKeysPath,
 

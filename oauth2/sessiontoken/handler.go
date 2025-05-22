@@ -79,14 +79,30 @@ func (h *Handler) issueToken(w http.ResponseWriter, r *http.Request, _ httproute
 		},
 	}
 
+	// Reserved claims that should not be overwritten by user input
+	reserved := map[string]struct{}{
+		"iss": {}, "sub": {}, "aud": {}, "exp": {}, "iat": {}, "jti": {},
+	}
+
 	claims := jwt.MapClaims{
-		"iss":   h.r.Config().IssuerURL(r.Context()).String(),
-		"sub":   req.Subject,
-		"aud":   req.ClientID,
-		"exp":   exp.Unix(),
-		"iat":   time.Now().Unix(),
-		"jti":   uuid.NewString(),
-		"nonce": uuid.NewString(),
+		"iss": h.r.Config().IssuerURL(r.Context()).String(),
+		"sub": req.Subject,
+		"aud": req.ClientID,
+		"exp": exp.Unix(),
+		"iat": time.Now().Unix(),
+		"jti": uuid.NewString(),
+	}
+
+	// Merge in safe custom claims
+	for k, v := range req.Extra {
+		if _, exists := reserved[k]; !exists {
+			claims[k] = v
+		}
+	}
+
+	// If nonce is not set, generate a default one
+	if _, ok := claims["nonce"]; !ok {
+		claims["nonce"] = uuid.NewString()
 	}
 
 	header := &jwt.Headers{

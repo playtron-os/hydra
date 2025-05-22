@@ -67,7 +67,7 @@ func (h *Handler) issueToken(w http.ResponseWriter, r *http.Request, _ httproute
 		exp = *req.ExpiresAt
 	}
 
-	keySet, err := h.r.KeyManager().GetKeySet(ctx, "hydra.jwt.access-token")
+	keySet, err := h.r.KeyManager().GetKeySet(ctx, "hydra.openid.id-token")
 	if err != nil || len(keySet.Keys) == 0 {
 		h.r.Writer().WriteError(w, r, errorsx.WithStack(herodot.ErrInternalServerError.WithWrap(err)))
 		return

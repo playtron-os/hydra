@@ -7,18 +7,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/pkg/errors"
+
+	"github.com/ory/x/httpx"
 
 	"github.com/hashicorp/go-retryablehttp"
 
 	"github.com/ory/hydra/v2/flow"
-	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/reqlog"
 
-	"github.com/ory/fosite"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/x/errorsx"
+	"github.com/ory/hydra/v2/fosite"
 )
 
 // AccessRequestHook is called when an access token request is performed.
@@ -30,6 +33,8 @@ type AccessRequestHook func(ctx context.Context, requester fosite.AccessRequeste
 type Request struct {
 	// ClientID is the identifier of the OAuth 2.0 client.
 	ClientID string `json:"client_id"`
+	// RequestedScopes is the list of scopes requested to the OAuth 2.0 client.
+	RequestedScopes []string `json:"requested_scopes"`
 	// GrantedScopes is the list of scopes granted to the OAuth 2.0 client.
 	GrantedScopes []string `json:"granted_scopes"`
 	// GrantedAudience is the list of audiences granted to the OAuth 2.0 client.
@@ -83,10 +88,10 @@ func applyAuth(req *retryablehttp.Request, auth *config.Auth) error {
 	return nil
 }
 
-func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, hookConfig *config.HookConfig, reqBodyBytes []byte, session *Session) error {
+func executeHookAndUpdateSession(ctx context.Context, reg httpx.ClientProvider, hookConfig *config.HookConfig, reqBodyBytes []byte, session *Session) error {
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodPost, hookConfig.URL, bytes.NewReader(reqBodyBytes))
 	if err != nil {
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrServerError.
 				WithWrap(err).
 				WithDescription("An error occurred while preparing the token hook.").
@@ -94,7 +99,7 @@ func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, 
 		)
 	}
 	if err := applyAuth(req, hookConfig.Auth); err != nil {
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrServerError.
 				WithWrap(err).
 				WithDescription("An error occurred while applying the token hook authentication.").
@@ -102,16 +107,18 @@ func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, 
 	}
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 
+	t0 := time.Now()
 	resp, err := reg.HTTPClient(ctx).Do(req)
 	if err != nil {
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrServerError.
 				WithWrap(err).
 				WithDescription("An error occurred while executing the token hook.").
 				WithDebugf("Unable to execute HTTP Request: %s", err),
 		)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
+	resp.Body = io.NopCloser(io.LimitReader(resp.Body, 5<<20 /* 5 MiB */))
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -120,13 +127,13 @@ func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, 
 		// Token is permitted without overriding session data
 		return nil
 	case http.StatusForbidden:
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrAccessDenied.
 				WithDescription("The token hook target responded with an error.").
 				WithDebugf("Token hook responded with HTTP status code: %s", resp.Status),
 		)
 	default:
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrServerError.
 				WithDescription("The token hook target responded with an error.").
 				WithDebugf("Token hook responded with HTTP status code: %s", resp.Status),
@@ -135,13 +142,15 @@ func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, 
 
 	var respBody TokenHookResponse
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-		return errorsx.WithStack(
+		return errors.WithStack(
 			fosite.ErrServerError.
 				WithWrap(err).
 				WithDescription("The token hook target responded with an error.").
 				WithDebugf("Response from token hook could not be decoded: %s", err),
 		)
 	}
+
+	reqlog.AccumulateExternalLatency(ctx, time.Since(t0)) // body read
 
 	// Overwrite existing session data (extra claims).
 	session.Extra = respBody.Session.AccessToken
@@ -153,8 +162,9 @@ func executeHookAndUpdateSession(ctx context.Context, reg x.HTTPClientProvider, 
 // TokenHook is an AccessRequestHook called for all grant types.
 func TokenHook(reg interface {
 	config.Provider
-	x.HTTPClientProvider
-}) AccessRequestHook {
+	httpx.ClientProvider
+},
+) AccessRequestHook {
 	return func(ctx context.Context, requester fosite.AccessRequester) error {
 		hookConfig := reg.Config().TokenHookConfig(ctx)
 		if hookConfig == nil {
@@ -168,6 +178,7 @@ func TokenHook(reg interface {
 
 		request := Request{
 			ClientID:        requester.GetClient().GetID(),
+			RequestedScopes: requester.GetRequestedScopes(),
 			GrantedScopes:   requester.GetGrantedScopes(),
 			GrantedAudience: requester.GetGrantedAudience(),
 			GrantTypes:      requester.GetGrantTypes(),
@@ -181,7 +192,7 @@ func TokenHook(reg interface {
 
 		reqBodyBytes, err := json.Marshal(&reqBody)
 		if err != nil {
-			return errorsx.WithStack(
+			return errors.WithStack(
 				fosite.ErrServerError.
 					WithWrap(err).
 					WithDescription("An error occurred while encoding the token hook.").

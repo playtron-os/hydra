@@ -1,70 +1,40 @@
 {
-  "ID": "challenge-0007",
-  "NID": "00000000-0000-0000-0000-000000000000",
-  "RequestedScope": [
+  "i": "challenge-0007",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
     "requested_scope-0007_1"
   ],
-  "RequestedAudience": [
+  "ra": [
     "requested_audience-0007_1"
   ],
-  "LoginSkip": true,
-  "Subject": "subject-0007",
-  "OpenIDConnectContext": {
+  "s": "subject-0007",
+  "oc": {
     "display": "display-0007"
   },
-  "Client": null,
-  "ClientID": "",
-  "RequestURL": "http://request/0007",
-  "SessionID": "auth_session-0007",
-  "IdentityProviderSessionID": "",
-  "LoginVerifier": "verifier-0007",
-  "LoginCSRF": "csrf-0007",
-  "LoginInitializedAt": null,
-  "RequestedAt": "0001-01-01T00:00:00Z",
-  "State": 128,
-  "LoginRemember": true,
-  "LoginRememberFor": 7,
-  "LoginExtendSessionLifespan": false,
-  "ACR": "acr-0007",
-  "AMR": [],
-  "ForceSubjectIdentifier": "force_subject_id-0007",
-  "Context": {},
-  "LoginWasUsed": true,
-  "LoginError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "LoginAuthenticatedAt": null,
-  "ConsentChallengeID": "challenge-0007",
-  "ConsentSkip": true,
-  "ConsentVerifier": "verifier-0007",
-  "ConsentCSRF": "csrf-0007",
-  "GrantedScope": [
+  "ci": "client-0014",
+  "r": "http://request/0007",
+  "si": "auth_session-0007",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0007",
+  "ct": {},
+  "la": null,
+  "dh": null,
+  "cc": "challenge-0007",
+  "cs": true,
+  "gs": [
     "granted_scope-0007_1"
   ],
-  "GrantedAudience": [
+  "ga": [
     "granted_audience-0007_1"
   ],
-  "ConsentRemember": true,
-  "ConsentRememberFor": 7,
-  "ConsentHandledAt": null,
-  "ConsentWasHandled": true,
-  "ConsentError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "SessionIDToken": {
+  "ce": true,
+  "cf": 7,
+  "ch": null,
+  "cx": null,
+  "st": {
     "session_id_token-0007": "0007"
   },
-  "SessionAccessToken": {
+  "sa": {
     "session_access_token-0007": "0007"
   }
 }

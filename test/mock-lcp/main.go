@@ -11,7 +11,6 @@ import (
 
 	hydra "github.com/ory/hydra-client-go/v2"
 
-	"github.com/ory/x/pointerx"
 	"github.com/ory/x/urlx"
 )
 
@@ -25,7 +24,7 @@ func init() {
 func login(rw http.ResponseWriter, r *http.Request) {
 	challenge := r.URL.Query().Get("login_challenge")
 	lr, resp, err := client.OAuth2API.GetOAuth2LoginRequest(r.Context()).LoginChallenge(challenge).Execute()
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if err != nil {
 		log.Fatalf("Unable to fetch clogin request: %s", err)
 	}
@@ -41,9 +40,9 @@ func login(rw http.ResponseWriter, r *http.Request) {
 			LoginChallenge(challenge).
 			AcceptOAuth2LoginRequest(hydra.AcceptOAuth2LoginRequest{
 				Subject:  "the-subject",
-				Remember: pointerx.Bool(remember),
+				Remember: new(remember),
 			}).Execute()
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		if err != nil {
 			log.Fatalf("Unable to execute request: %s", err)
 		}
@@ -52,9 +51,9 @@ func login(rw http.ResponseWriter, r *http.Request) {
 		vr, resp, err := client.OAuth2API.RejectOAuth2LoginRequest(r.Context()).
 			LoginChallenge(challenge).
 			RejectOAuth2Request(hydra.RejectOAuth2Request{
-				Error: pointerx.String("invalid_request"),
+				Error: new("invalid_request"),
 			}).Execute()
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		if err != nil {
 			log.Fatalf("Unable to execute request: %s", err)
 		}
@@ -70,7 +69,7 @@ func consent(rw http.ResponseWriter, r *http.Request) {
 	challenge := r.URL.Query().Get("consent_challenge")
 
 	o, resp, err := client.OAuth2API.GetOAuth2ConsentRequest(r.Context()).ConsentChallenge(challenge).Execute()
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if err != nil {
 		log.Fatalf("Unable to fetch consent request: %s", err)
 	}
@@ -90,13 +89,13 @@ func consent(rw http.ResponseWriter, r *http.Request) {
 			ConsentChallenge(challenge).
 			AcceptOAuth2ConsentRequest(hydra.AcceptOAuth2ConsentRequest{
 				GrantScope: o.RequestedScope,
-				Remember:   pointerx.Bool(remember),
+				Remember:   new(remember),
 				Session: &hydra.AcceptOAuth2ConsentRequestSession{
 					AccessToken: map[string]interface{}{"foo": value},
 					IdToken:     map[string]interface{}{"baz": value},
 				},
 			}).Execute()
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		if err != nil {
 			log.Fatalf("Unable to execute request: %s", err)
 		}
@@ -104,8 +103,8 @@ func consent(rw http.ResponseWriter, r *http.Request) {
 	} else {
 		v, resp, err := client.OAuth2API.RejectOAuth2ConsentRequest(r.Context()).
 			ConsentChallenge(challenge).
-			RejectOAuth2Request(hydra.RejectOAuth2Request{Error: pointerx.String("invalid_request")}).Execute()
-		defer resp.Body.Close()
+			RejectOAuth2Request(hydra.RejectOAuth2Request{Error: new("invalid_request")}).Execute()
+		defer resp.Body.Close() //nolint:errcheck
 		if err != nil {
 			log.Fatalf("Unable to execute request: %s", err)
 		}

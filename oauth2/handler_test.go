@@ -15,44 +15,40 @@ import (
 	"testing"
 	"time"
 
-	hydra "github.com/ory/hydra-client-go/v2"
+	"github.com/ory/hydra/v2/driver"
 
-	"github.com/ory/x/httprouterx"
-
-	"github.com/ory/x/snapshotx"
-
-	"github.com/ory/x/contextx"
-
-	"github.com/ory/hydra/v2/jwk"
-	"github.com/ory/hydra/v2/x"
-
-	"github.com/golang/mock/gomock"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/openid"
-	"github.com/ory/fosite/token/jwt"
+	hydra "github.com/ory/hydra-client-go/v2"
 	"github.com/ory/hydra/v2/client"
+	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/handler/openid"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/httprouterx"
+	"github.com/ory/x/snapshotx"
 )
 
 var lifespan = time.Hour
 
 func TestHandlerDeleteHandler(t *testing.T) {
-	ctx := context.Background()
-	conf := internal.NewConfigurationWithDefaults()
-	conf.MustSet(ctx, config.KeyIssuerURL, "http://hydra.localhost")
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
+	t.Parallel()
+
+	ctx := t.Context()
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValue(config.KeyIssuerURL, "http://hydra.localhost")))
 
 	cm := reg.ClientManager()
 	store := reg.OAuth2Storage()
 
-	h := oauth2.NewHandler(reg, conf)
+	h := oauth2.NewHandler(reg)
 
 	deleteRequest := &fosite.Request{
 		ID:             "del-1",
@@ -63,13 +59,12 @@ func TestHandlerDeleteHandler(t *testing.T) {
 		Form:           url.Values{"foo": []string{"bar", "baz"}},
 		Session:        &oauth2.Session{DefaultSession: &openid.DefaultSession{Subject: "bar"}},
 	}
-	require.NoError(t, cm.CreateClient(context.Background(), deleteRequest.Client.(*client.Client)))
-	require.NoError(t, store.CreateAccessTokenSession(context.Background(), deleteRequest.ID, deleteRequest))
+	require.NoError(t, cm.CreateClient(ctx, deleteRequest.Client.(*client.Client)))
+	require.NoError(t, store.CreateAccessTokenSession(ctx, deleteRequest.ID, deleteRequest))
 
-	r := x.NewRouterAdmin(conf.AdminURL)
-	h.SetRoutes(r, &httprouterx.RouterPublic{Router: r.Router}, func(h http.Handler) http.Handler {
-		return h
-	})
+	r := httprouterx.NewTestRouterAdminWithPrefix(t)
+	h.SetPublicRoutes(r.ToPublic(), func(h http.Handler) http.Handler { return h })
+	h.SetAdminRoutes(r)
 	ts := httptest.NewServer(r)
 	defer ts.Close()
 
@@ -77,7 +72,7 @@ func TestHandlerDeleteHandler(t *testing.T) {
 	c.GetConfig().Servers = hydra.ServerConfigurations{{URL: ts.URL}}
 
 	_, err := c.
-		OAuth2API.DeleteOAuth2Token(context.Background()).
+		OAuth2API.DeleteOAuth2Token(ctx).
 		ClientId("foobar").Execute()
 	require.NoError(t, err)
 
@@ -87,25 +82,24 @@ func TestHandlerDeleteHandler(t *testing.T) {
 }
 
 func TestUserinfo(t *testing.T) {
-	ctx := context.Background()
-	conf := internal.NewConfigurationWithDefaults()
-	conf.MustSet(ctx, config.KeyScopeStrategy, "")
-	conf.MustSet(ctx, config.KeyAuthCodeLifespan, lifespan)
-	conf.MustSet(ctx, config.KeyIssuerURL, "http://hydra.localhost")
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
-	internal.MustEnsureRegistryKeys(ctx, reg, x.OpenIDConnectKeyName)
+	t.Parallel()
 
 	ctrl := gomock.NewController(t)
 	op := NewMockOAuth2Provider(ctrl)
-	defer ctrl.Finish()
-	reg.WithOAuth2Provider(op)
+	t.Cleanup(ctrl.Finish)
 
-	h := reg.OAuth2Handler()
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyScopeStrategy:    "",
+		config.KeyAuthCodeLifespan: lifespan,
+		config.KeyIssuerURL:        "http://hydra.localhost",
+	})), driver.WithOAuth2Provider(op))
+	testhelpers.MustEnsureRegistryKeys(t, reg, x.OpenIDConnectKeyName)
 
-	router := x.NewRouterAdmin(conf.AdminURL)
-	h.SetRoutes(router, &httprouterx.RouterPublic{Router: router.Router}, func(h http.Handler) http.Handler {
-		return h
-	})
+	h := oauth2.NewHandler(reg)
+
+	router := httprouterx.NewTestRouterAdminWithPrefix(t)
+	h.SetPublicRoutes(router.ToPublic(), func(h http.Handler) http.Handler { return h })
+	h.SetAdminRoutes(router)
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
@@ -304,7 +298,7 @@ func TestUserinfo(t *testing.T) {
 			expectStatusCode: http.StatusOK,
 			checkForSuccess: func(t *testing.T, body []byte) {
 				claims, err := jwt.Parse(string(body), func(token *jwt.Token) (interface{}, error) {
-					keys, err := reg.KeyManager().GetKeySet(context.Background(), x.OpenIDConnectKeyName)
+					keys, err := reg.KeyManager().GetKeySet(t.Context(), x.OpenIDConnectKeyName)
 					require.NoError(t, err)
 					t.Logf("%+v", keys)
 					key, _ := jwk.FindPublicKey(keys)
@@ -312,7 +306,7 @@ func TestUserinfo(t *testing.T) {
 				})
 				require.NoError(t, err)
 				assert.EqualValues(t, "alice", claims.Claims["sub"])
-				assert.EqualValues(t, []interface{}{"foobar-client"}, claims.Claims["aud"], "%#v", claims.Claims)
+				assert.EqualValuesf(t, []any{"foobar-client"}, claims.Claims["aud"], "%#v", claims.Claims)
 				assert.NotEmpty(t, claims.Claims["jti"])
 			},
 		},
@@ -325,10 +319,10 @@ func TestUserinfo(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer access-token")
 			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err)
-			defer resp.Body.Close()
-			require.EqualValues(t, tc.expectStatusCode, resp.StatusCode)
+			t.Cleanup(func() { _ = resp.Body.Close() })
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
+			require.Equalf(t, tc.expectStatusCode, resp.StatusCode, "body: %s", body)
 			if tc.expectStatusCode == http.StatusOK {
 				tc.checkForSuccess(t, body)
 			} else if tc.expectStatusCode == http.StatusUnauthorized {
@@ -339,33 +333,90 @@ func TestUserinfo(t *testing.T) {
 }
 
 func TestHandlerWellKnown(t *testing.T) {
-	ctx := context.Background()
-	conf := internal.NewConfigurationWithDefaults()
-	t.Run(fmt.Sprintf("hsm_enabled=%v", conf.HSMEnabled()), func(t *testing.T) {
-		conf.MustSet(ctx, config.KeyScopeStrategy, "DEPRECATED_HIERARCHICAL_SCOPE_STRATEGY")
-		conf.MustSet(ctx, config.KeyIssuerURL, "http://hydra.localhost")
-		conf.MustSet(ctx, config.KeySubjectTypesSupported, []string{"pairwise", "public"})
-		conf.MustSet(ctx, config.KeyOIDCDiscoverySupportedClaims, []string{"sub"})
-		conf.MustSet(ctx, config.KeyOAuth2ClientRegistrationURL, "http://client-register/registration")
-		conf.MustSet(ctx, config.KeyOIDCDiscoveryUserinfoEndpoint, "/userinfo")
-		reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
+	t.Parallel()
 
-		h := oauth2.NewHandler(reg, conf)
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyScopeStrategy:                 "DEPRECATED_HIERARCHICAL_SCOPE_STRATEGY",
+		config.KeyIssuerURL:                     "http://hydra.localhost",
+		config.KeySubjectTypesSupported:         []string{"pairwise", "public"},
+		config.KeyOIDCDiscoverySupportedClaims:  []string{"sub"},
+		config.KeyOAuth2ClientRegistrationURL:   "http://client-register/registration",
+		config.KeyOIDCDiscoveryUserinfoEndpoint: "/userinfo",
+	})))
+	t.Run(fmt.Sprintf("hsm_enabled=%v", reg.Config().HSMEnabled()), func(t *testing.T) {
+		testhelpers.MustEnsureRegistryKeys(t, reg, x.OpenIDConnectKeyName)
 
-		r := x.NewRouterAdmin(conf.AdminURL)
-		h.SetRoutes(r, &httprouterx.RouterPublic{Router: r.Router}, func(h http.Handler) http.Handler {
-			return h
-		})
+		h := oauth2.NewHandler(reg)
+
+		r := httprouterx.NewTestRouterAdminWithPrefix(t)
+		h.SetPublicRoutes(r.ToPublic(), func(h http.Handler) http.Handler { return h })
+		h.SetAdminRoutes(r)
 		ts := httptest.NewServer(r)
 		defer ts.Close()
 
 		res, err := http.Get(ts.URL + "/.well-known/openid-configuration")
 		require.NoError(t, err)
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 
 		var wellKnownResp hydra.OidcConfiguration
 		err = json.NewDecoder(res.Body).Decode(&wellKnownResp)
 		require.NoError(t, err, "problem decoding wellknown json response: %+v", err)
-		snapshotx.SnapshotT(t, wellKnownResp)
+
+		snapshotOpts := []snapshotx.Opt{}
+		if reg.Config().HSMEnabled() {
+			// The signing algorithm is not stable in the HSM tests, because the key is kept
+			// in the HSM and persists across test runs.
+			snapshotOpts = append(snapshotOpts, snapshotx.ExceptPaths(
+				"id_token_signed_response_alg",
+				"id_token_signing_alg_values_supported",
+				"userinfo_signed_response_alg",
+				"userinfo_signing_alg_values_supported",
+			))
+		}
+		snapshotx.SnapshotT(t, wellKnownResp, snapshotOpts...)
+	})
+}
+
+func TestHandlerOauthAuthorizationServer(t *testing.T) {
+	t.Parallel()
+
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyScopeStrategy:                 "DEPRECATED_HIERARCHICAL_SCOPE_STRATEGY",
+		config.KeyIssuerURL:                     "http://hydra.localhost",
+		config.KeySubjectTypesSupported:         []string{"pairwise", "public"},
+		config.KeyOIDCDiscoverySupportedClaims:  []string{"sub"},
+		config.KeyOAuth2ClientRegistrationURL:   "http://client-register/registration",
+		config.KeyOIDCDiscoveryUserinfoEndpoint: "/userinfo",
+	})))
+	t.Run(fmt.Sprintf("hsm_enabled=%v", reg.Config().HSMEnabled()), func(t *testing.T) {
+		testhelpers.MustEnsureRegistryKeys(t, reg, x.OpenIDConnectKeyName)
+
+		h := oauth2.NewHandler(reg)
+
+		r := httprouterx.NewTestRouterAdminWithPrefix(t)
+		h.SetPublicRoutes(r.ToPublic(), func(h http.Handler) http.Handler { return h })
+		h.SetAdminRoutes(r)
+		ts := httptest.NewServer(r)
+		defer ts.Close()
+
+		res, err := http.Get(ts.URL + "/.well-known/oauth-authorization-server")
+		require.NoError(t, err)
+		defer res.Body.Close() //nolint:errcheck
+
+		var wellKnownResp hydra.OidcConfiguration
+		err = json.NewDecoder(res.Body).Decode(&wellKnownResp)
+		require.NoError(t, err, "problem decoding wellknown json response: %+v", err)
+		snapshotOpts := []snapshotx.Opt{}
+		if reg.Config().HSMEnabled() {
+			// The signing algorithm is not stable in the HSM tests, because the key is kept
+			// in the HSM and persists across test runs.
+			snapshotOpts = append(snapshotOpts, snapshotx.ExceptPaths(
+				"id_token_signed_response_alg",
+				"id_token_signing_alg_values_supported",
+				"userinfo_signed_response_alg",
+				"userinfo_signing_alg_values_supported",
+			))
+		}
+		snapshotx.SnapshotT(t, wellKnownResp, snapshotOpts...)
 	})
 }

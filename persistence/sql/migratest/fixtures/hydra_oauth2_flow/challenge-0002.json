@@ -1,66 +1,33 @@
 {
-  "ID": "challenge-0002",
-  "NID": "00000000-0000-0000-0000-000000000000",
-  "RequestedScope": [
+  "i": "challenge-0002",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
     "requested_scope-0002_1"
   ],
-  "RequestedAudience": [],
-  "LoginSkip": true,
-  "Subject": "subject-0002",
-  "OpenIDConnectContext": {
+  "s": "subject-0002",
+  "oc": {
     "display": "display-0002"
   },
-  "Client": null,
-  "ClientID": "",
-  "RequestURL": "http://request/0002",
-  "SessionID": "",
-  "IdentityProviderSessionID": "",
-  "LoginVerifier": "verifier-0002",
-  "LoginCSRF": "csrf-0002",
-  "LoginInitializedAt": null,
-  "RequestedAt": "0001-01-01T00:00:00Z",
-  "State": 128,
-  "LoginRemember": true,
-  "LoginRememberFor": 2,
-  "LoginExtendSessionLifespan": false,
-  "ACR": "acr-0002",
-  "AMR": [],
-  "ForceSubjectIdentifier": "force_subject_id-0002",
-  "Context": {},
-  "LoginWasUsed": true,
-  "LoginError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "LoginAuthenticatedAt": null,
-  "ConsentChallengeID": "challenge-0002",
-  "ConsentSkip": true,
-  "ConsentVerifier": "verifier-0002",
-  "ConsentCSRF": "csrf-0002",
-  "GrantedScope": [
+  "ci": "client-0014",
+  "r": "http://request/0002",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0002",
+  "ct": {},
+  "la": null,
+  "dh": null,
+  "cc": "challenge-0002",
+  "cs": true,
+  "gs": [
     "granted_scope-0002_1"
   ],
-  "GrantedAudience": [],
-  "ConsentRemember": true,
-  "ConsentRememberFor": 2,
-  "ConsentHandledAt": null,
-  "ConsentWasHandled": true,
-  "ConsentError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "SessionIDToken": {
+  "ce": true,
+  "cf": 2,
+  "ch": null,
+  "cx": null,
+  "st": {
     "session_id_token-0002": "0002"
   },
-  "SessionAccessToken": {
+  "sa": {
     "session_access_token-0002": "0002"
   }
 }

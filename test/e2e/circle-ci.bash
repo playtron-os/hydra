@@ -12,7 +12,6 @@ function catch {
 trap catch ERR
 
 killall hydra || true
-killall node || true
 
 # Check if any ports that we need are open already
 ! nc -zv 127.0.0.1 5004
@@ -21,12 +20,11 @@ killall node || true
 ! nc -zv 127.0.0.1 5003
 
 # Install Ory Hydra
-export GO111MODULE=on
 if [[ ! -d "../../node_modules/" ]]; then
     (cd ../..; npm ci)
 fi
 
-(cd ../../; go build -tags sqlite,json1 -o test/e2e/hydra . )
+(cd ../../; go build -tags sqlite -o test/e2e/hydra . )
 
 # Install oauth2-client
 if [[ ! -d "./oauth2-client/node_modules/" ]]; then
@@ -38,6 +36,8 @@ fi
 (cd oauth2-client; PORT=5002 HYDRA_ADMIN_URL=http://127.0.0.1:5001 npm run consent > ../login-consent-logout.e2e.log 2>&1 &)
 
 export URLS_SELF_ISSUER=http://127.0.0.1:5004/
+export URLS_DEVICE_VERIFICATION=http://127.0.0.1:5002/device/verify
+export URLS_DEVICE_SUCCESS=http://127.0.0.1:5002/oauth2/device/success
 export URLS_CONSENT=http://127.0.0.1:5002/consent
 export URLS_LOGIN=http://127.0.0.1:5002/login
 export URLS_LOGOUT=http://127.0.0.1:5002/logout
@@ -92,7 +92,7 @@ case $i in
 esac
 done
 
-./hydra migrate sql --yes $TEST_DATABASE > ./hydra-migrate.e2e.log 2>&1
+./hydra migrate sql up --yes $TEST_DATABASE > ./hydra-migrate.e2e.log 2>&1
     DSN=$TEST_DATABASE \
     ./hydra serve all --dev --sqa-opt-out > ./hydra.e2e.log 2>&1 &
 

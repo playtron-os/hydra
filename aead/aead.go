@@ -6,14 +6,14 @@ package aead
 import (
 	"context"
 
-	"github.com/ory/fosite"
+	"github.com/ory/hydra/v2/fosite"
 )
 
 // Cipher provides AEAD (authenticated encryption with associated data). The
 // ciphertext is returned base64url-encoded.
 type Cipher interface {
 	// Encrypt encrypts and encodes the given plaintext, optionally using
-	// additiona data.
+	// additional data.
 	Encrypt(ctx context.Context, plaintext, additionalData []byte) (ciphertext string, err error)
 
 	// Decrypt decodes, decrypts, and verifies the plaintext and additional data

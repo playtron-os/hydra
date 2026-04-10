@@ -5,6 +5,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,47 +15,57 @@ import (
 	hydra "github.com/ory/hydra-client-go/v2"
 	"github.com/ory/hydra/v2/cmd/cli"
 	"github.com/ory/x/flagx"
-	"github.com/ory/x/pointerx"
 )
 
-func clientFromFlags(cmd *cobra.Command) hydra.OAuth2Client {
-	audience := flagx.MustGetStringSlice(cmd, flagClientAudience)
-	aud := ""
-	if len(audience) > 0 {
-		aud = audience[0]
+func clientFromFlags(cmd *cobra.Command) (hydra.OAuth2Client, error) {
+	if filename := flagx.MustGetString(cmd, flagFile); filename != "" {
+		src := cmd.InOrStdin()
+		if filename != "-" {
+			f, err := os.Open(filename) // #nosec G304
+			if err != nil {
+				return hydra.OAuth2Client{}, fmt.Errorf("unable to open file %q: %w", filename, err)
+			}
+			defer f.Close() //nolint:errcheck
+			src = f
+		}
+		client := hydra.OAuth2Client{}
+		if err := json.NewDecoder(src).Decode(&client); err != nil {
+			return hydra.OAuth2Client{}, fmt.Errorf("unable to decode JSON: %w", err)
+		}
+		return client, nil
 	}
 
 	return hydra.OAuth2Client{
-		AccessTokenStrategy:               pointerx.Ptr(flagx.MustGetString(cmd, flagClientAccessTokenStrategy)),
+		AccessTokenStrategy:               new(flagx.MustGetString(cmd, flagClientAccessTokenStrategy)),
 		AllowedCorsOrigins:                flagx.MustGetStringSlice(cmd, flagClientAllowedCORSOrigin),
-		Audience:                          aud,
-		BackchannelLogoutSessionRequired:  pointerx.Ptr(flagx.MustGetBool(cmd, flagClientBackChannelLogoutSessionRequired)),
-		BackchannelLogoutUri:              pointerx.Ptr(flagx.MustGetString(cmd, flagClientBackchannelLogoutCallback)),
-		ClientName:                        pointerx.Ptr(flagx.MustGetString(cmd, flagClientName)),
-		ClientSecret:                      pointerx.Ptr(flagx.MustGetString(cmd, flagClientSecret)),
-		ClientUri:                         pointerx.Ptr(flagx.MustGetString(cmd, flagClientClientURI)),
+		Audience:                          flagx.MustGetStringSlice(cmd, flagClientAudience),
+		BackchannelLogoutSessionRequired:  new(flagx.MustGetBool(cmd, flagClientBackChannelLogoutSessionRequired)),
+		BackchannelLogoutUri:              new(flagx.MustGetString(cmd, flagClientBackchannelLogoutCallback)),
+		ClientName:                        new(flagx.MustGetString(cmd, flagClientName)),
+		ClientSecret:                      new(flagx.MustGetString(cmd, flagClientSecret)),
+		ClientUri:                         new(flagx.MustGetString(cmd, flagClientClientURI)),
 		Contacts:                          flagx.MustGetStringSlice(cmd, flagClientContact),
-		FrontchannelLogoutSessionRequired: pointerx.Ptr(flagx.MustGetBool(cmd, flagClientFrontChannelLogoutSessionRequired)),
-		FrontchannelLogoutUri:             pointerx.Ptr(flagx.MustGetString(cmd, flagClientFrontChannelLogoutCallback)),
+		FrontchannelLogoutSessionRequired: new(flagx.MustGetBool(cmd, flagClientFrontChannelLogoutSessionRequired)),
+		FrontchannelLogoutUri:             new(flagx.MustGetString(cmd, flagClientFrontChannelLogoutCallback)),
 		GrantTypes:                        flagx.MustGetStringSlice(cmd, flagClientGrantType),
-		JwksUri:                           pointerx.Ptr(flagx.MustGetString(cmd, flagClientJWKSURI)),
-		LogoUri:                           pointerx.Ptr(flagx.MustGetString(cmd, flagClientLogoURI)),
+		JwksUri:                           new(flagx.MustGetString(cmd, flagClientJWKSURI)),
+		LogoUri:                           new(flagx.MustGetString(cmd, flagClientLogoURI)),
 		Metadata:                          json.RawMessage(flagx.MustGetString(cmd, flagClientMetadata)),
-		Owner:                             pointerx.Ptr(flagx.MustGetString(cmd, flagClientOwner)),
-		PolicyUri:                         pointerx.Ptr(flagx.MustGetString(cmd, flagClientPolicyURI)),
+		Owner:                             new(flagx.MustGetString(cmd, flagClientOwner)),
+		PolicyUri:                         new(flagx.MustGetString(cmd, flagClientPolicyURI)),
 		PostLogoutRedirectUris:            flagx.MustGetStringSlice(cmd, flagClientPostLogoutCallback),
 		RedirectUris:                      flagx.MustGetStringSlice(cmd, flagClientRedirectURI),
-		RequestObjectSigningAlg:           pointerx.Ptr(flagx.MustGetString(cmd, flagClientRequestObjectSigningAlg)),
+		RequestObjectSigningAlg:           new(flagx.MustGetString(cmd, flagClientRequestObjectSigningAlg)),
 		RequestUris:                       flagx.MustGetStringSlice(cmd, flagClientRequestURI),
 		ResponseTypes:                     flagx.MustGetStringSlice(cmd, flagClientResponseType),
-		Scope:                             pointerx.Ptr(strings.Join(flagx.MustGetStringSlice(cmd, flagClientScope), " ")),
-		SkipConsent:                       pointerx.Ptr(flagx.MustGetBool(cmd, flagClientSkipConsent)),
-		SkipLogoutConsent:                 pointerx.Ptr(flagx.MustGetBool(cmd, flagClientLogoutSkipConsent)),
-		SectorIdentifierUri:               pointerx.Ptr(flagx.MustGetString(cmd, flagClientSectorIdentifierURI)),
-		SubjectType:                       pointerx.Ptr(flagx.MustGetString(cmd, flagClientSubjectType)),
-		TokenEndpointAuthMethod:           pointerx.Ptr(flagx.MustGetString(cmd, flagClientTokenEndpointAuthMethod)),
-		TosUri:                            pointerx.Ptr(flagx.MustGetString(cmd, flagClientTOSURI)),
-	}
+		Scope:                             new(strings.Join(flagx.MustGetStringSlice(cmd, flagClientScope), " ")),
+		SkipConsent:                       new(flagx.MustGetBool(cmd, flagClientSkipConsent)),
+		SkipLogoutConsent:                 new(flagx.MustGetBool(cmd, flagClientLogoutSkipConsent)),
+		SectorIdentifierUri:               new(flagx.MustGetString(cmd, flagClientSectorIdentifierURI)),
+		SubjectType:                       new(flagx.MustGetString(cmd, flagClientSubjectType)),
+		TokenEndpointAuthMethod:           new(flagx.MustGetString(cmd, flagClientTokenEndpointAuthMethod)),
+		TosUri:                            new(flagx.MustGetString(cmd, flagClientTOSURI)),
+	}, nil
 }
 
 func registerEncryptFlags(flags *pflag.FlagSet) {
@@ -64,6 +76,8 @@ func registerEncryptFlags(flags *pflag.FlagSet) {
 }
 
 func registerClientFlags(flags *pflag.FlagSet) {
+	flags.String(flagFile, "", "Read a JSON file representing a client from this location. If set, the other client flags are ignored.")
+
 	flags.String(flagClientMetadata, "{}", "Metadata is an arbitrary JSON String of your choosing.")
 	flags.String(flagClientOwner, "", "The owner of this client, typically email addresses or a user ID.")
 	flags.StringSlice(flagClientContact, nil, "A list representing ways to contact people responsible for this client, typically email addresses.")

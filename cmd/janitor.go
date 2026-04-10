@@ -6,18 +6,16 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/ory/hydra/v2/driver"
-	"github.com/ory/x/servicelocatorx"
-
 	"github.com/ory/hydra/v2/cmd/cli"
+	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/x/configx"
 )
 
-func NewJanitorCmd(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) *cobra.Command {
+func NewJanitorCmd(dOpts []driver.OptionsModifier) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "janitor [<database-url>]",
+		Use:     "janitor [[database_url]]",
 		Short:   "This command cleans up stale database rows.",
-		Example: `hydra janitor --keep-if-younger 23h --access-lifespan 1h --refresh-lifespan 40h --consent-request-lifespan 10m <database-url>`,
+		Example: `hydra janitor --keep-if-younger 23h --access-lifespan 1h --refresh-lifespan 40h --consent-request-lifespan 10m [database_url]`,
 		Long: `This command cleans up stale database rows. This will select records to delete with a limit
 and delete records in batch to ensure that no table locking issues arise in big production
 databases.
@@ -62,8 +60,8 @@ Janitor can be used in several ways.
 
 		hydra janitor --tokens --requests --grants {database-url}
 `,
-		RunE: cli.NewHandler(slOpts, dOpts, cOpts).Janitor.RunE,
-		Args: cli.NewHandler(slOpts, dOpts, cOpts).Janitor.Args,
+		RunE: cli.NewHandler(dOpts).Janitor.RunE,
+		Args: cli.NewHandler(dOpts).Janitor.Args,
 	}
 	cmd.Flags().Int(cli.Limit, 10000, "Limit the number of records retrieved from database for deletion.")
 	cmd.Flags().Int(cli.BatchSize, 100, "Define how many records are deleted with each iteration.")

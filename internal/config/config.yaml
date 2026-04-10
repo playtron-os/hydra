@@ -365,7 +365,7 @@ strategies:
   # You may use JSON Web Tokens as access tokens.
   #
   # But seriously. Don't do that. It's not a great idea and has a ton of caveats and subtle security implications. Read more:
-  # -> https://www.ory.sh/docs/hydra/advanced#json-web-tokens
+  # -> https://www.ory.sh/docs/oauth2-oidc/jwt-access-token
   #
   #  access_token: jwt
 
@@ -402,6 +402,18 @@ oauth2:
   session:
     # store encrypted data in database, default true
     encrypt_at_rest: true
+    ## refresh_token_rotation
+  # By default Refresh Tokens are rotated and invalidated with each use. See https://datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics#section-4.13.2 for more details
+  refresh_token_rotation:
+    #
+    ## grace_period
+    #
+    # Set the grace period for refresh tokens to be reused. Such reused tokens will result in multiple refresh tokens being issued.
+    #
+    # Examples:
+    # - 5s
+    # - 1m
+    grace_period: 0s
 
 # The secrets section configures secrets used for encryption and signing of several systems. All secrets can be rotated,
 # for more information on this topic navigate to:

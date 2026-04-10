@@ -5,6 +5,7 @@ package oauth2_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,36 +17,33 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v3"
-	"github.com/google/uuid"
-	"github.com/tidwall/gjson"
-
-	"github.com/ory/fosite/token/jwt"
-	"github.com/ory/hydra/v2/flow"
-	"github.com/ory/hydra/v2/jwk"
-	hydraoauth2 "github.com/ory/hydra/v2/oauth2"
-	"github.com/ory/hydra/v2/oauth2/trust"
-
+	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	goauth2 "golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 
-	"github.com/ory/hydra/v2/internal/testhelpers"
-	"github.com/ory/x/contextx"
-
 	hc "github.com/ory/hydra/v2/client"
+	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-	"github.com/ory/hydra/v2/x"
+	"github.com/ory/hydra/v2/flow"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/hydra/v2/jwk"
+	hydraoauth2 "github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/hydra/v2/oauth2/trust"
+	"github.com/ory/x/configx"
 )
 
 func TestJWTBearer(t *testing.T) {
-	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
-	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
+	t.Parallel()
+
+	ctx := t.Context()
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValue(config.KeyAccessTokenStrategy, "opaque")))
 	_, admin := testhelpers.NewOAuth2Server(ctx, t, reg)
 
-	secret := uuid.New().String()
+	secret := uuid.Must(uuid.NewV4()).String()
 	client := &hc.Client{
 		Secret:     secret,
 		GrantTypes: []string{"client_credentials", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
@@ -71,7 +69,7 @@ func TestJWTBearer(t *testing.T) {
 	}
 
 	var inspectToken = func(t *testing.T, token *goauth2.Token, cl *hc.Client, strategy string, grant trust.Grant, checkExtraClaims bool) {
-		introspection := testhelpers.IntrospectToken(t, &goauth2.Config{ClientID: cl.GetID(), ClientSecret: cl.Secret}, token.AccessToken, admin)
+		introspection := testhelpers.IntrospectToken(t, token.AccessToken, admin)
 
 		check := func(res gjson.Result) {
 			assert.EqualValues(t, cl.GetID(), res.Get("client_id").String(), "%s", res.Raw)
@@ -98,15 +96,13 @@ func TestJWTBearer(t *testing.T) {
 			return
 		}
 
-		body, err := x.DecodeSegment(strings.Split(token.AccessToken, ".")[1])
-		require.NoError(t, err)
-		jwtClaims := gjson.ParseBytes(body)
+		jwtClaims := gjson.ParseBytes(testhelpers.InsecureDecodeJWT(t, token.AccessToken))
 		assert.NotEmpty(t, jwtClaims.Get("jti").String())
 		assert.NotEmpty(t, jwtClaims.Get("iss").String())
 		assert.NotEmpty(t, jwtClaims.Get("client_id").String())
 		assert.EqualValues(t, "offline_access", introspection.Get("scope").String(), "%s", introspection.Raw)
 
-		header, err := x.DecodeSegment(strings.Split(token.AccessToken, ".")[0])
+		header, err := base64.RawURLEncoding.DecodeString(strings.Split(token.AccessToken, ".")[0])
 		require.NoError(t, err)
 		jwtHeader := gjson.ParseBytes(header)
 		assert.NotEmpty(t, jwtHeader.Get("kid").String())
@@ -138,29 +134,29 @@ func TestJWTBearer(t *testing.T) {
 		assert.Contains(t, err.Error(), "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	})
 
-	set, kid := uuid.NewString(), uuid.NewString()
-	keys, err := jwk.GenerateJWK(ctx, jose.RS256, kid, "sig")
+	set, kid := uuid.Must(uuid.NewV4()).String(), uuid.Must(uuid.NewV4()).String()
+	keys, err := jwk.GenerateJWK(jose.RS256, kid, "sig")
 	require.NoError(t, err)
 	trustGrant := trust.Grant{
-		ID:              uuid.NewString(),
+		ID:              uuid.Must(uuid.NewV4()),
 		Issuer:          set,
-		Subject:         uuid.NewString(),
+		Subject:         uuid.Must(uuid.NewV4()).String(),
 		AllowAnySubject: false,
 		Scope:           []string{"offline_access"},
 		ExpiresAt:       time.Now().Add(time.Hour),
 		PublicKey:       trust.PublicKey{Set: set, KeyID: kid},
 	}
 	require.NoError(t, reg.GrantManager().CreateGrant(ctx, trustGrant, keys.Keys[0].Public()))
-	signer := jwk.NewDefaultJWTSigner(reg.Config(), reg, set)
+	signer := jwk.NewDefaultJWTSigner(reg, set)
 	signer.GetPrivateKey = func(ctx context.Context) (interface{}, error) {
 		return keys.Keys[0], nil
 	}
 
 	t.Run("case=unable to exchange token with a non-allowed subject", func(t *testing.T) {
 		token, _, err := signer.Generate(ctx, jwt.MapClaims{
-			"jti": uuid.NewString(),
+			"jti": uuid.Must(uuid.NewV4()).String(),
 			"iss": trustGrant.Issuer,
-			"sub": uuid.NewString(),
+			"sub": uuid.Must(uuid.NewV4()).String(),
 			"aud": reg.Config().OAuth2TokenURL(ctx).String(),
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Add(-time.Minute).Unix(),
@@ -176,7 +172,7 @@ func TestJWTBearer(t *testing.T) {
 
 	t.Run("case=unable to exchange token with non-allowed scope", func(t *testing.T) {
 		token, _, err := signer.Generate(ctx, jwt.MapClaims{
-			"jti": uuid.NewString(),
+			"jti": uuid.Must(uuid.NewV4()).String(),
 			"iss": trustGrant.Issuer,
 			"sub": trustGrant.Subject,
 			"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -195,13 +191,13 @@ func TestJWTBearer(t *testing.T) {
 
 	t.Run("case=unable to exchange token with an unknown kid", func(t *testing.T) {
 		token, _, err := signer.Generate(ctx, jwt.MapClaims{
-			"jti": uuid.NewString(),
+			"jti": uuid.Must(uuid.NewV4()).String(),
 			"iss": trustGrant.Issuer,
 			"sub": trustGrant.Subject,
 			"aud": reg.Config().OAuth2TokenURL(ctx).String(),
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Add(-time.Minute).Unix(),
-		}, &jwt.Headers{Extra: map[string]interface{}{"kid": uuid.NewString()}})
+		}, &jwt.Headers{Extra: map[string]interface{}{"kid": uuid.Must(uuid.NewV4()).String()}})
 		require.NoError(t, err)
 
 		conf := newConf(client)
@@ -212,15 +208,15 @@ func TestJWTBearer(t *testing.T) {
 	})
 
 	t.Run("case=unable to exchange token with an invalid key", func(t *testing.T) {
-		keys, err := jwk.GenerateJWK(ctx, jose.RS256, kid, "sig")
+		keys, err := jwk.GenerateJWK(jose.RS256, kid, "sig")
 		require.NoError(t, err)
-		signer := jwk.NewDefaultJWTSigner(reg.Config(), reg, set)
+		signer := jwk.NewDefaultJWTSigner(reg, set)
 		signer.GetPrivateKey = func(ctx context.Context) (interface{}, error) {
 			return keys.Keys[0], nil
 		}
 
 		token, _, err := signer.Generate(ctx, jwt.MapClaims{
-			"jti": uuid.NewString(),
+			"jti": uuid.Must(uuid.NewV4()).String(),
 			"iss": trustGrant.Issuer,
 			"sub": trustGrant.Subject,
 			"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -242,7 +238,7 @@ func TestJWTBearer(t *testing.T) {
 				reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, strategy)
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -274,7 +270,7 @@ func TestJWTBearer(t *testing.T) {
 				reg.Config().MustSet(ctx, "config.KeyOAuth2GrantJWTClientAuthOptional", true)
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -288,7 +284,7 @@ func TestJWTBearer(t *testing.T) {
 					"assertion":  {token},
 				})
 				require.NoError(t, err)
-				defer res.Body.Close()
+				defer res.Body.Close() //nolint:errcheck
 				body, err := io.ReadAll(res.Body)
 				require.NoError(t, err)
 				require.EqualValues(t, http.StatusOK, res.StatusCode, "%s", body)
@@ -312,7 +308,7 @@ func TestJWTBearer(t *testing.T) {
 				grantType := "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": audience,
@@ -383,7 +379,7 @@ func TestJWTBearer(t *testing.T) {
 				grantType := "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": audience,
@@ -471,7 +467,7 @@ func TestJWTBearer(t *testing.T) {
 				defer reg.Config().MustSet(ctx, config.KeyTokenHook, nil)
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -506,7 +502,7 @@ func TestJWTBearer(t *testing.T) {
 				defer reg.Config().MustSet(ctx, config.KeyTokenHook, nil)
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": reg.Config().OAuth2TokenURL(ctx).String(),
@@ -541,7 +537,7 @@ func TestJWTBearer(t *testing.T) {
 				defer reg.Config().MustSet(ctx, config.KeyTokenHook, nil)
 
 				token, _, err := signer.Generate(ctx, jwt.MapClaims{
-					"jti": uuid.NewString(),
+					"jti": uuid.Must(uuid.NewV4()).String(),
 					"iss": trustGrant.Issuer,
 					"sub": trustGrant.Subject,
 					"aud": reg.Config().OAuth2TokenURL(ctx).String(),

@@ -16,32 +16,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ory/hydra/v2/internal/kratos"
-	"github.com/ory/x/pointerx"
+	"github.com/ory/hydra/v2/driver"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
-	jwtgo "github.com/ory/fosite/token/jwt"
-
 	hydra "github.com/ory/hydra-client-go/v2"
 	"github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
+	jwtgo "github.com/ory/hydra/v2/fosite/token/jwt"
+	"github.com/ory/hydra/v2/internal/kratos"
 	"github.com/ory/hydra/v2/internal/testhelpers"
-	"github.com/ory/x/contextx"
+	"github.com/ory/x/configx"
 	"github.com/ory/x/ioutilx"
 )
 
 func TestLogoutFlows(t *testing.T) {
 	ctx := context.Background()
 	fakeKratos := kratos.NewFake()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
-	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
-	reg.Config().MustSet(ctx, config.KeyConsentRequestMaxAge, time.Hour)
-
-	reg.WithKratos(fakeKratos)
+	reg := testhelpers.NewRegistryMemory(t,
+		driver.WithConfigOptions(configx.WithValues(map[string]any{
+			config.KeyAccessTokenStrategy:  "opaque",
+			config.KeyConsentRequestMaxAge: time.Hour,
+		})),
+		driver.WithKratosClient(fakeKratos))
 
 	defaultRedirectedMessage := "redirected to default server"
 	postLogoutCallback := func(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +65,8 @@ func TestLogoutFlows(t *testing.T) {
 	createSampleClient := func(t *testing.T) *client.Client {
 		return createClient(t, reg, &client.Client{
 			RedirectURIs:           []string{testhelpers.NewCallbackURL(t, "callback", testhelpers.HTTPServerNotImplementedHandler)},
-			PostLogoutRedirectURIs: []string{customPostLogoutURL}})
+			PostLogoutRedirectURIs: []string{customPostLogoutURL},
+		})
 	}
 
 	createClientWithBackchannelLogout := func(t *testing.T, wg *sync.WaitGroup, cb func(t *testing.T, logoutToken gjson.Result)) *client.Client {
@@ -76,7 +76,7 @@ func TestLogoutFlows(t *testing.T) {
 			require.NoError(t, r.ParseForm())
 			lt := r.PostFormValue("logout_token")
 			assert.NotEmpty(t, lt)
-			token, err := reg.OpenIDJWTStrategy().Decode(r.Context(), lt)
+			token, err := reg.OpenIDJWTSigner().Decode(r.Context(), lt)
 			require.NoError(t, err)
 
 			var b bytes.Buffer
@@ -88,7 +88,8 @@ func TestLogoutFlows(t *testing.T) {
 		return createClient(t, reg, &client.Client{
 			BackChannelLogoutURI:   server.URL,
 			RedirectURIs:           []string{testhelpers.NewCallbackURL(t, "callback", testhelpers.HTTPServerNotImplementedHandler)},
-			PostLogoutRedirectURIs: []string{customPostLogoutURL}})
+			PostLogoutRedirectURIs: []string{customPostLogoutURL},
+		})
 	}
 
 	makeLogoutRequest := func(t *testing.T, hc *http.Client, method string, values url.Values) (body string, resp *http.Response) {
@@ -99,7 +100,7 @@ func TestLogoutFlows(t *testing.T) {
 			resp, err = hc.PostForm(publicTS.URL+"/oauth2/sessions/logout", values)
 		}
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		return string(ioutilx.MustReadAll(resp.Body)), resp
 	}
 
@@ -111,7 +112,7 @@ func TestLogoutFlows(t *testing.T) {
 		resp, err = hc.Do(req)
 
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		return string(ioutilx.MustReadAll(resp.Body)), resp
 	}
 
@@ -186,28 +187,27 @@ func TestLogoutFlows(t *testing.T) {
 		testhelpers.NewLoginConsentUI(t, reg.Config(),
 			checkAndAcceptLoginHandler(t, adminApi, subject, func(t *testing.T, res *hydra.OAuth2LoginRequest, err error) hydra.AcceptOAuth2LoginRequest {
 				require.NoError(t, err)
-				//res.Payload.SessionID
+				// res.Payload.SessionID
 				return hydra.AcceptOAuth2LoginRequest{
-					Remember:                  pointerx.Ptr(true),
-					IdentityProviderSessionId: pointerx.Ptr(kratos.FakeSessionID),
+					Remember:                  new(true),
+					IdentityProviderSessionId: new(kratos.FakeSessionID),
 				}
 			}),
 			checkAndAcceptConsentHandler(t, adminApi, func(t *testing.T, res *hydra.OAuth2ConsentRequest, err error) hydra.AcceptOAuth2ConsentRequest {
 				require.NoError(t, err)
 				if sid != nil {
-					go func() {
-						for i := 0; i < numSidConsumers; i++ {
-							sid <- *res.LoginSessionId
-						}
-					}()
+					for range numSidConsumers {
+						sid <- *res.LoginSessionId
+					}
 				}
-				return hydra.AcceptOAuth2ConsentRequest{Remember: pointerx.Bool(remember)}
+				return hydra.AcceptOAuth2ConsentRequest{Remember: new(remember)}
 			}))
-
 	}
 
-	acceptLoginAsAndWatchSid := func(t *testing.T, subject string, sid chan string) {
+	acceptLoginAsAndWatchSid := func(t *testing.T, subject string) <-chan string {
+		sid := make(chan string, 1)
 		acceptLoginAsAndWatchSidForConsumers(t, subject, sid, true, 1)
+		return sid
 	}
 
 	acceptLoginAs := func(t *testing.T, subject string) {
@@ -322,8 +322,7 @@ func TestLogoutFlows(t *testing.T) {
 	})
 
 	t.Run("case=should execute backchannel logout if issued without rp-involvement", func(t *testing.T) {
-		sid := make(chan string)
-		acceptLoginAsAndWatchSid(t, subject, sid)
+		sid := acceptLoginAsAndWatchSid(t, subject)
 
 		logoutWg := newWg(2)
 		setupCheckAndAcceptLogoutHandler(t, logoutWg, nil)
@@ -363,14 +362,14 @@ func TestLogoutFlows(t *testing.T) {
 			expectedErrMessage string
 		}{
 			{
-				d: "should fail rp-inititated flow because id token hint is missing issuer",
+				d: "should fail rp-initiated flow because id token hint is missing issuer",
 				claims: jwtgo.MapClaims{
 					"iat": time.Now().Add(-time.Hour * 2).Unix(),
 				},
 				expectedErrMessage: "Logout failed because issuer claim value &#39;&#39; from query parameter id_token_hint does not match with issuer value from configuration",
 			},
 			{
-				d: "should fail rp-inititated flow because id token hint is using wrong issuer",
+				d: "should fail rp-initiated flow because id token hint is using wrong issuer",
 				claims: jwtgo.MapClaims{
 					"iss": "some-issuer",
 					"iat": time.Now().Add(-time.Hour * 2).Unix(),
@@ -378,7 +377,7 @@ func TestLogoutFlows(t *testing.T) {
 				expectedErrMessage: "Logout failed because issuer claim value &#39;some-issuer&#39; from query parameter id_token_hint does not match with issuer value from configuration",
 			},
 			{
-				d: "should fail rp-inititated flow because iat is in the future",
+				d: "should fail rp-initiated flow because iat is in the future",
 				claims: jwtgo.MapClaims{
 					"iss": reg.Config().IssuerURL(ctx).String(),
 					"iat": time.Now().Add(time.Hour * 2).Unix(),
@@ -387,10 +386,8 @@ func TestLogoutFlows(t *testing.T) {
 			},
 		} {
 			t.Run("case="+tc.d, func(t *testing.T) {
-
 				c := createSampleClient(t)
-				sid := make(chan string)
-				acceptLoginAsAndWatchSid(t, subject, sid)
+				sid := acceptLoginAsAndWatchSid(t, subject)
 				browser := createBrowserWithSession(t, c)
 
 				wg := newWg(1)
@@ -436,8 +433,7 @@ func TestLogoutFlows(t *testing.T) {
 		c := createSampleClient(t)
 		run := func(method string, claims jwtgo.MapClaims) func(t *testing.T) {
 			return func(t *testing.T) {
-				sid := make(chan string)
-				acceptLoginAsAndWatchSid(t, subject, sid)
+				sid := acceptLoginAsAndWatchSid(t, subject)
 
 				setupCheckAndAcceptLogoutHandler(t, nil, nil)
 				browser := createBrowserWithSession(t, c)
@@ -468,21 +464,21 @@ func TestLogoutFlows(t *testing.T) {
 		}
 
 		t.Run("case=should pass even if expiry is in the past", func(t *testing.T) {
-			// formerly: should pass rp-inititated even when expiry is in the past
+			// formerly: should pass rp-initiated even when expiry is in the past
 			claims := jwtgo.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}
 			t.Run("method=GET", run("GET", claims))
 			t.Run("method=POST", run("POST", claims))
 		})
 
 		t.Run("case=should pass even if audience is an array not a string", func(t *testing.T) {
-			// formerly: should pass rp-inititated flow"
-			claims := jwtgo.MapClaims{"aud": c.GetID()}
+			// formerly: should pass rp-initiated flow"
+			claims := jwtgo.MapClaims{"aud": []string{c.GetID()}}
 			t.Run("method=GET", run("GET", claims))
 			t.Run("method=POST", run("POST", claims))
 		})
 	})
 
-	t.Run("case=should pass rp-inititated flow without any action because SID is unknown", func(t *testing.T) {
+	t.Run("case=should pass rp-initiated flow without any action because SID is unknown", func(t *testing.T) {
 		c := createSampleClient(t)
 		acceptLoginAs(t, subject)
 
@@ -495,7 +491,7 @@ func TestLogoutFlows(t *testing.T) {
 			"state":                    {"1234"},
 			"post_logout_redirect_uri": {customPostLogoutURL},
 			"id_token_hint": {genIDToken(t, reg, jwtgo.MapClaims{
-				"aud": c.GetID(), // make sure this works with string slices too
+				"aud": []string{c.GetID()}, // make sure this works with string slices too
 				"iss": reg.Config().IssuerURL(ctx).String(),
 				"sub": subject,
 				"sid": "i-do-not-exist",
@@ -507,8 +503,7 @@ func TestLogoutFlows(t *testing.T) {
 
 	t.Run("case=should not append a state param if no state was passed to logout server", func(t *testing.T) {
 		c := createSampleClient(t)
-		sid := make(chan string)
-		acceptLoginAsAndWatchSid(t, subject, sid)
+		sid := acceptLoginAsAndWatchSid(t, subject)
 
 		setupCheckAndAcceptLogoutHandler(t, nil, nil)
 		browser := createBrowserWithSession(t, c)
@@ -534,10 +529,10 @@ func TestLogoutFlows(t *testing.T) {
 	t.Run("case=should return to default post logout because session was revoked in browser context", func(t *testing.T) {
 		fakeKratos.Reset()
 		c := createSampleClient(t)
-		sid := make(chan string)
-		acceptLoginAsAndWatchSid(t, subject, sid)
+		sid := acceptLoginAsAndWatchSid(t, subject)
 
-		wg := newWg(2)
+		wg := newWg(3)
+		fakeKratos.DisableSessionCB = wg.Done
 		setupCheckAndAcceptLogoutHandler(t, wg, nil)
 		browser := createBrowserWithSession(t, c)
 
@@ -562,11 +557,11 @@ func TestLogoutFlows(t *testing.T) {
 				defer wg.Done()
 				require.NoError(t, err)
 				assert.False(t, res.Skip)
-				return hydra.AcceptOAuth2LoginRequest{Remember: pointerx.Ptr(true)}
+				return hydra.AcceptOAuth2LoginRequest{Remember: new(true)}
 			}),
 			checkAndAcceptConsentHandler(t, adminApi, func(t *testing.T, res *hydra.OAuth2ConsentRequest, err error) hydra.AcceptOAuth2ConsentRequest {
 				require.NoError(t, err)
-				return hydra.AcceptOAuth2ConsentRequest{Remember: pointerx.Ptr(true)}
+				return hydra.AcceptOAuth2ConsentRequest{Remember: new(true)}
 			}))
 
 		// Make an oauth 2 request to trigger the login check.
@@ -586,7 +581,9 @@ func TestLogoutFlows(t *testing.T) {
 		sid := make(chan string, numSidConsumers)
 		acceptLoginAsAndWatchSidForConsumers(t, subject, sid, true, numSidConsumers)
 
-		backChannelWG := newWg(1)
+		backChannelWG := newWg(2)
+		fakeKratos.DisableSessionCB = backChannelWG.Done
+
 		c := createClientWithBackchannelLogout(t, backChannelWG, func(t *testing.T, logoutToken gjson.Result) {
 			assert.EqualValues(t, <-sid, logoutToken.Get("sid").String(), logoutToken.Raw)
 			assert.Empty(t, logoutToken.Get("sub").String(), logoutToken.Raw) // The sub claim should be empty because it doesn't work with forced obfuscation and thus we can't easily recover it.
@@ -608,12 +605,16 @@ func TestLogoutFlows(t *testing.T) {
 
 	t.Run("case=should logout in headless flow with session that has remember=false", func(t *testing.T) {
 		fakeKratos.Reset()
-		sid := make(chan string)
+		sid := make(chan string, 1)
 		acceptLoginAsAndWatchSidForConsumers(t, subject, sid, false, 1)
+
+		wg := newWg(1)
+		fakeKratos.DisableSessionCB = wg.Done
 
 		c := createSampleClient(t)
 
 		logoutViaHeadlessAndExpectNoContent(t, createBrowserWithSession(t, c), url.Values{"sid": {<-sid}})
+		wg.Wait()
 		assert.True(t, fakeKratos.DisableSessionWasCalled)
 		assert.Equal(t, fakeKratos.LastDisabledSession, kratos.FakeSessionID)
 	})

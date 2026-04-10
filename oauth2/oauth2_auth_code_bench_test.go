@@ -4,6 +4,7 @@
 package oauth2_test
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"net/http"
@@ -32,14 +33,14 @@ import (
 
 	hydra "github.com/ory/hydra-client-go/v2"
 	hc "github.com/ory/hydra/v2/client"
+	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
 	"github.com/ory/hydra/v2/internal/testhelpers"
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/contextx"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/otelx"
 	"github.com/ory/x/pointerx"
-	"github.com/ory/x/stringsx"
 )
 
 var (
@@ -76,16 +77,19 @@ func BenchmarkAuthCode(b *testing.B) {
 
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, otelhttp.DefaultClient)
 
-	dsn := stringsx.Coalesce(os.Getenv("DSN"), "postgres://postgres:secret@127.0.0.1:3445/postgres?sslmode=disable&max_conns=20&max_idle_conns=20")
+	dsn := cmp.Or(os.Getenv("DSN"), "postgres://postgres:secret@127.0.0.1:3445/postgres?sslmode=disable&max_conns=20&max_idle_conns=20")
 	// dsn := "mysql://root:secret@tcp(localhost:3444)/mysql?max_conns=16&max_idle_conns=16"
 	// dsn := "cockroach://root@localhost:3446/defaultdb?sslmode=disable&max_conns=16&max_idle_conns=16"
-	reg := internal.NewRegistrySQLFromURL(b, dsn, true, new(contextx.Default)).WithTracer(tracer)
-	reg.Config().MustSet(ctx, config.KeyLogLevel, "error")
-	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
-	reg.Config().MustSet(ctx, config.KeyRefreshTokenHook, "")
-	oauth2Keys, err := jwk.GenerateJWK(ctx, jose.ES256, x.OAuth2JWTKeyName, "sig")
+	reg := testhelpers.NewRegistrySQLFromURL(b, dsn, true, true, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyLogLevel:                  "error",
+		config.KeyAccessTokenStrategy:       "opaque",
+		config.KeyRefreshTokenHook:          "",
+		"tracing.providers.otlp.server_url": "http://localhost:4318",
+		"tracing.providers.otlp.insecure":   true,
+	})), driver.WithTracerWrapper(func(t *otelx.Tracer) *otelx.Tracer { return new(otelx.Tracer).WithOTLP(tracer) }))
+	oauth2Keys, err := jwk.GenerateJWK(jose.ES256, x.OAuth2JWTKeyName, "sig")
 	require.NoError(b, err)
-	oidcKeys, err := jwk.GenerateJWK(ctx, jose.ES256, x.OpenIDConnectKeyName, "sig")
+	oidcKeys, err := jwk.GenerateJWK(jose.ES256, x.OpenIDConnectKeyName, "sig")
 	require.NoError(b, err)
 	_, _ = oauth2Keys, oidcKeys
 	require.NoError(b, reg.KeyManager().UpdateKeySet(ctx, x.OAuth2JWTKeyName, oauth2Keys))
@@ -136,7 +140,7 @@ func BenchmarkAuthCode(b *testing.B) {
 		require.NoError(b, err)
 		resp, err := c.Do(req)
 		require.NoError(b, err)
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 
 		q := resp.Request.URL.Query()
 		require.EqualValues(b, state, q.Get("state"))
@@ -160,8 +164,8 @@ func BenchmarkAuthCode(b *testing.B) {
 
 			acceptBody := hydra.AcceptOAuth2LoginRequest{
 				Subject:  uuid.New(),
-				Remember: pointerx.Ptr(!rr.Skip),
-				Acr:      pointerx.Ptr("1"),
+				Remember: new(!rr.Skip),
+				Acr:      new("1"),
 				Amr:      []string{"pwd"},
 				Context:  map[string]interface{}{"context": "bar"},
 			}
@@ -204,7 +208,7 @@ func BenchmarkAuthCode(b *testing.B) {
 			v, _, err := adminClient.OAuth2API.AcceptOAuth2ConsentRequest(ctx).
 				ConsentChallenge(r.URL.Query().Get("consent_challenge")).
 				AcceptOAuth2ConsentRequest(hydra.AcceptOAuth2ConsentRequest{
-					GrantScope: []string{"hydra", "offline", "openid"}, Remember: pointerx.Ptr(true), RememberFor: pointerx.Ptr[int64](0),
+					GrantScope: []string{"hydra", "offline", "openid"}, Remember: new(true), RememberFor: new(int64(0)),
 					GrantAccessTokenAudience: rr.RequestedAccessTokenAudience,
 					Session: &hydra.AcceptOAuth2ConsentRequestSession{
 						AccessToken: map[string]interface{}{"foo": "bar"},
@@ -227,12 +231,10 @@ func BenchmarkAuthCode(b *testing.B) {
 		)
 
 		return func(b *testing.B) {
-			//pop.Debug = true
 			code, _ := getAuthorizeCode(ctx, b, conf, nil, oauth2.SetAuthURLParam("nonce", nonce))
 			require.NotEmpty(b, code)
 
 			_, err := conf.Exchange(ctx, code)
-			//pop.Debug = false
 			require.NoError(b, err)
 		}
 	}
@@ -286,7 +288,6 @@ func BenchmarkAuthCode(b *testing.B) {
 		b.ReportMetric((float64(dbSpans(spans)-initialDBSpans))/float64(b.N), "queries/op")
 		b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "ops/s")
 	})
-
 }
 
 func profile(t testing.TB) (stop func()) {

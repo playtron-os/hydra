@@ -16,25 +16,19 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v3"
+	"github.com/gofrs/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 	"github.com/tidwall/gjson"
 
-	"github.com/ory/x/pointerx"
-
-	"github.com/stretchr/testify/assert"
-
-	"github.com/ory/hydra/v2/oauth2/trust"
-	"github.com/ory/x/contextx"
-
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/suite"
-
-	"github.com/ory/hydra/v2/driver"
-	"github.com/ory/hydra/v2/jwk"
-
 	hydra "github.com/ory/hydra-client-go/v2"
+	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-	"github.com/ory/hydra/v2/x"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/hydra/v2/jwk"
+	"github.com/ory/hydra/v2/oauth2/trust"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/httprouterx"
 )
 
 // Define the suite, and absorb the built-in basic suite
@@ -42,26 +36,24 @@ import (
 // returns the current testing context.
 type HandlerTestSuite struct {
 	suite.Suite
-	registry    driver.Registry
+	registry    *driver.RegistrySQL
 	server      *httptest.Server
 	hydraClient *hydra.APIClient
 	publicKey   *rsa.PublicKey
 }
 
 // Setup will run before the tests in the suite are run.
-func (s *HandlerTestSuite) SetupSuite() {
-	conf := internal.NewConfigurationWithDefaults()
-	conf.MustSet(context.Background(), config.KeySubjectTypesSupported, []string{"public"})
-	conf.MustSet(context.Background(), config.KeyDefaultClientScope, []string{"foo", "bar"})
-	s.registry = internal.NewRegistryMemory(s.T(), conf, &contextx.Default{})
+func (s *HandlerTestSuite) SetupTest() {
+	s.registry = testhelpers.NewRegistryMemory(s.T(), driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeySubjectTypesSupported: []string{"public"},
+		config.KeyDefaultClientScope:    []string{"foo", "bar"},
+	})))
 
-	router := x.NewRouterAdmin(conf.AdminURL)
+	router := httprouterx.NewTestRouterAdminWithPrefix(s.T())
 	handler := trust.NewHandler(s.registry)
 	handler.SetRoutes(router)
 	jwkHandler := jwk.NewHandler(s.registry)
-	jwkHandler.SetRoutes(router, x.NewRouterPublic(), func(h http.Handler) http.Handler {
-		return h
-	})
+	jwkHandler.SetAdminRoutes(router)
 	s.server = httptest.NewServer(router)
 
 	c := hydra.NewAPIClient(hydra.NewConfiguration())
@@ -71,17 +63,13 @@ func (s *HandlerTestSuite) SetupSuite() {
 }
 
 // Setup before each test.
-func (s *HandlerTestSuite) SetupTest() {
-}
+func (s *HandlerTestSuite) SetupSuite() {}
 
 // Will run after all the tests in the suite have been run.
-func (s *HandlerTestSuite) TearDownSuite() {
-}
+func (s *HandlerTestSuite) TearDownSuite() {}
 
 // Will run after each test in the suite.
-func (s *HandlerTestSuite) TearDownTest() {
-	internal.CleanAndMigrate(s.registry)(s.T())
-}
+func (s *HandlerTestSuite) TearDownTest() {}
 
 // In order for 'go test' to run this suite, we need to create
 // a normal test function and pass our suite to suite.Run.
@@ -137,8 +125,7 @@ func (s *HandlerTestSuite) TestGrantCanNotBeCreatedWithSameIssuerSubjectKey() {
 	_, _, err = s.hydraClient.OAuth2API.TrustOAuth2JwtGrantIssuer(ctx).TrustOAuth2JwtGrantIssuer(createRequestParams).Execute()
 	s.Require().Error(err, "expected error, because grant with same issuer+subject+kid exists")
 
-	kid := uuid.New().String()
-	createRequestParams.Jwk.Kid = kid
+	createRequestParams.Jwk.Kid = uuid.Must(uuid.NewV4()).String()
 	_, _, err = s.hydraClient.OAuth2API.TrustOAuth2JwtGrantIssuer(ctx).TrustOAuth2JwtGrantIssuer(createRequestParams).Execute()
 	s.NoError(err, "no errors expected on grant creation, because kid is now different")
 }
@@ -158,7 +145,7 @@ func (s *HandlerTestSuite) TestGrantCanNotBeCreatedWithSubjectAndAnySubject() {
 
 func (s *HandlerTestSuite) TestGrantCanNotBeCreatedWithUnknownJWK() {
 	createRequestParams := hydra.TrustOAuth2JwtGrantIssuer{
-		AllowAnySubject: pointerx.Ptr(true),
+		AllowAnySubject: new(true),
 		ExpiresAt:       time.Now().Add(1 * time.Hour),
 		Issuer:          "ory",
 		Jwk: hydra.JsonWebKey{
@@ -168,10 +155,10 @@ func (s *HandlerTestSuite) TestGrantCanNotBeCreatedWithUnknownJWK() {
 	}
 
 	_, res, err := s.hydraClient.OAuth2API.TrustOAuth2JwtGrantIssuer(context.Background()).TrustOAuth2JwtGrantIssuer(createRequestParams).Execute()
+	s.Require().Error(err, "expected error, because the key type was unknown")
 	s.Assert().Equal(http.StatusBadRequest, res.StatusCode)
 	body, _ := io.ReadAll(res.Body)
 	s.Contains(gjson.GetBytes(body, "error_description").String(), "unknown json web key type")
-	s.Require().Error(err, "expected error, because the key type was unknown")
 }
 
 func (s *HandlerTestSuite) TestGrantCanNotBeCreatedWithMissingFields() {
@@ -267,12 +254,13 @@ func (s *HandlerTestSuite) TestGrantListCanBeFetched() {
 
 	getResult, _, err := s.hydraClient.OAuth2API.ListTrustedOAuth2JwtGrantIssuers(context.Background()).Execute()
 	s.Require().NoError(err, "no errors expected on grant list fetching")
-	s.Len(getResult, 2, "expected to get list of 2 grants")
+	s.Require().Len(getResult, 2, "expected to get list of 2 grants")
+	s.ElementsMatch([]string{createRequestParams.Issuer, createRequestParams2.Issuer}, []string{*getResult[0].Issuer, *getResult[1].Issuer})
 
 	getResult, _, err = s.hydraClient.OAuth2API.ListTrustedOAuth2JwtGrantIssuers(context.Background()).Issuer(createRequestParams2.Issuer).Execute()
 
 	s.Require().NoError(err, "no errors expected on grant list fetching")
-	s.Len(getResult, 1, "expected to get list of 1 grant, when filtering by issuer")
+	s.Require().Len(getResult, 1, "expected to get list of 1 grant, when filtering by issuer")
 	s.Equal(createRequestParams2.Issuer, *getResult[0].Issuer, "issuer must match")
 }
 
@@ -299,7 +287,7 @@ func (s *HandlerTestSuite) generateJWK(publicKey *rsa.PublicKey) hydra.JsonWebKe
 	var b bytes.Buffer
 	s.Require().NoError(json.NewEncoder(&b).Encode(&jose.JSONWebKey{
 		Key:       publicKey,
-		KeyID:     uuid.New().String(),
+		KeyID:     uuid.Must(uuid.NewV4()).String(),
 		Algorithm: string(jose.RS256),
 		Use:       "sig",
 	}))
@@ -317,8 +305,8 @@ func (s *HandlerTestSuite) newCreateJwtBearerGrantParams(
 		Issuer:          issuer,
 		Jwk:             s.generateJWK(s.publicKey),
 		Scope:           scope,
-		Subject:         pointerx.String(subject),
-		AllowAnySubject: pointerx.Bool(allowAnySubject),
+		Subject:         new(subject),
+		AllowAnySubject: new(allowAnySubject),
 	}
 }
 

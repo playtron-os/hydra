@@ -5,11 +5,13 @@ package events
 
 import (
 	"context"
+	"errors"
 
 	otelattr "go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/ory/fosite"
+	"github.com/ory/herodot"
+	"github.com/ory/hydra/v2/fosite"
 	"github.com/ory/x/otelx/semconv"
 )
 
@@ -19,6 +21,8 @@ const (
 
 	// LoginRejected will be emitted when the login UI rejects a login request.
 	LoginRejected semconv.Event = "OAuth2LoginRejected"
+
+	DeviceUserCodeAccepted semconv.Event = "OAuth2DeviceUserCodeAccepted"
 
 	// ConsentAccepted will be emitted when the consent UI accepts a consent request.
 	ConsentAccepted semconv.Event = "OAuth2ConsentAccepted"
@@ -58,11 +62,15 @@ const (
 )
 
 const (
-	attributeKeyOAuth2ClientName  = "OAuth2ClientName"
-	attributeKeyOAuth2ClientID    = "OAuth2ClientID"
-	attributeKeyOAuth2Subject     = "OAuth2Subject"
-	attributeKeyOAuth2GrantType   = "OAuth2GrantType"
-	attributeKeyOAuth2TokenFormat = "OAuth2TokenFormat" //nolint:gosec
+	attributeKeyOAuth2ClientName            = "OAuth2ClientName"
+	attributeKeyOAuth2ClientID              = "OAuth2ClientID"
+	attributeKeyOAuth2Subject               = "OAuth2Subject"
+	attributeKeyOAuth2GrantType             = "OAuth2GrantType"
+	attributeKeyOAuth2ConsentRequestID      = "OAuth2ConsentRequestID"
+	attributeKeyOAuth2TokenFormat           = "OAuth2TokenFormat"           //nolint:gosec
+	attributeKeyOAuth2RefreshTokenSignature = "OAuth2RefreshTokenSignature" //nolint:gosec
+	attributeKeyOAuth2AccessTokenSignature  = "OAuth2AccessTokenSignature"  //nolint:gosec
+	attributeKeyErrorReason                 = "ErrorReason"
 )
 
 // WithTokenFormat emits the token format as part of the event.
@@ -75,9 +83,25 @@ func WithGrantType(grantType string) trace.EventOption {
 	return trace.WithAttributes(otelattr.String(attributeKeyOAuth2GrantType, grantType))
 }
 
+func ClientID(clientID string) otelattr.KeyValue {
+	return otelattr.String(attributeKeyOAuth2ClientID, clientID)
+}
+
+func RefreshTokenSignature(signature string) otelattr.KeyValue {
+	return otelattr.String(attributeKeyOAuth2RefreshTokenSignature, signature)
+}
+
+func AccessTokenSignature(signature string) otelattr.KeyValue {
+	return otelattr.String(attributeKeyOAuth2AccessTokenSignature, signature)
+}
+
+func ConsentRequestID(id string) otelattr.KeyValue {
+	return otelattr.String(attributeKeyOAuth2ConsentRequestID, id)
+}
+
 // WithClientID emits the client ID as part of the event.
 func WithClientID(clientID string) trace.EventOption {
-	return trace.WithAttributes(otelattr.String(attributeKeyOAuth2ClientID, clientID))
+	return trace.WithAttributes(ClientID(clientID))
 }
 
 // WithClientName emits the client name as part of the event.
@@ -88,6 +112,11 @@ func WithClientName(clientID string) trace.EventOption {
 // WithSubject emits the subject as part of the event.
 func WithSubject(subject string) trace.EventOption {
 	return trace.WithAttributes(otelattr.String(attributeKeyOAuth2Subject, subject))
+}
+
+// WithSubject emits the consent request ID as part of the event.
+func WithConsentRequestID(id string) trace.EventOption {
+	return trace.WithAttributes(ConsentRequestID(id))
 }
 
 // WithRequest emits the subject and client ID from the fosite request as part of the event.
@@ -101,6 +130,17 @@ func WithRequest(request fosite.Requester) trace.EventOption {
 	}
 
 	return trace.WithAttributes(attributes...)
+}
+
+// WithError sets the Reason attribute according to the error given.
+func WithError(err error) trace.EventOption {
+	if err == nil {
+		return trace.WithAttributes()
+	}
+	if rc := herodot.ReasonCarrier(nil); errors.As(err, &rc) && rc.Reason() != "" { // also works for fosite.RFC6749Error
+		return trace.WithAttributes(otelattr.String(attributeKeyErrorReason, rc.Reason()))
+	}
+	return trace.WithAttributes(otelattr.String(attributeKeyErrorReason, err.Error()))
 }
 
 // Trace emits an event with the given attributes.

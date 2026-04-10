@@ -21,20 +21,16 @@ import (
 )
 
 func newJanitorCmd() *cobra.Command {
-	return cmd.NewRootCmd(nil, nil, nil)
+	return cmd.NewRootCmd()
 }
 
 func TestJanitorHandler_PurgeTokenNotAfter(t *testing.T) {
-	ctx := context.Background()
-	testCycles := testhelpers.NewConsentJanitorTestHelper("").GetNotAfterTestCycles()
+	ctx := t.Context()
 
-	require.True(t, len(testCycles) > 0)
-
-	for k, v := range testCycles {
+	for k, v := range testhelpers.NotAfterTestCycles {
 		t.Run(fmt.Sprintf("case=%s", k), func(t *testing.T) {
 			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, k)
-			require.NoError(t, err)
+			reg := jt.GetRegistry(t)
 
 			// setup test
 			t.Run("step=setup-access", jt.AccessTokenNotAfterSetup(ctx, reg.ClientManager(), reg.OAuth2Storage()))
@@ -45,10 +41,10 @@ func TestJanitorHandler_PurgeTokenNotAfter(t *testing.T) {
 				cmdx.ExecNoErr(t, newJanitorCmd(),
 					"janitor",
 					fmt.Sprintf("--%s=%s", cli.KeepIfYounger, v.String()),
-					fmt.Sprintf("--%s=%s", cli.AccessLifespan, jt.GetAccessTokenLifespan(ctx).String()),
-					fmt.Sprintf("--%s=%s", cli.RefreshLifespan, jt.GetRefreshTokenLifespan(ctx).String()),
+					fmt.Sprintf("--%s=%s", cli.AccessLifespan, jt.GetAccessTokenLifespan().String()),
+					fmt.Sprintf("--%s=%s", cli.RefreshLifespan, jt.GetRefreshTokenLifespan().String()),
 					fmt.Sprintf("--%s", cli.OnlyTokens),
-					jt.GetDSN(),
+					reg.Config().DSN(),
 				)
 			})
 
@@ -60,163 +56,30 @@ func TestJanitorHandler_PurgeTokenNotAfter(t *testing.T) {
 	}
 }
 
-func TestJanitorHandler_PurgeLoginConsentNotAfter(t *testing.T) {
-	ctx := context.Background()
-
-	testCycles := testhelpers.NewConsentJanitorTestHelper("").GetNotAfterTestCycles()
-
-	for k, v := range testCycles {
-		jt := testhelpers.NewConsentJanitorTestHelper(k)
-		reg, err := jt.GetRegistry(ctx, k)
-		require.NoError(t, err)
-
-		t.Run(fmt.Sprintf("case=%s", k), func(t *testing.T) {
-			// Setup the test
-			t.Run("step=setup", jt.LoginConsentNotAfterSetup(ctx, reg.ConsentManager(), reg.ClientManager()))
-			// Run the cleanup routine
-			t.Run("step=cleanup", func(t *testing.T) {
-				cmdx.ExecNoErr(t, newJanitorCmd(),
-					"janitor",
-					fmt.Sprintf("--%s=%s", cli.KeepIfYounger, v.String()),
-					fmt.Sprintf("--%s=%s", cli.ConsentRequestLifespan, jt.GetConsentRequestLifespan(ctx).String()),
-					fmt.Sprintf("--%s", cli.OnlyRequests),
-					jt.GetDSN(),
-				)
-			})
-
-			notAfter := time.Now().Round(time.Second).Add(-v)
-			consentLifespan := time.Now().Round(time.Second).Add(-jt.GetConsentRequestLifespan(ctx))
-			t.Run("step=validate", jt.LoginConsentNotAfterValidate(ctx, notAfter, consentLifespan, reg))
-		})
-	}
-
-}
-
-func TestJanitorHandler_PurgeLoginConsent(t *testing.T) {
-	/*
-		Login and Consent also needs to be purged on two conditions besides the KeyConsentRequestMaxAge and notAfter time
-		- when a login/consent request was never completed (timed out)
-		- when a login/consent request was rejected
-	*/
-
-	t.Run("case=login-consent-timeout", func(t *testing.T) {
-		t.Run("case=login-timeout", func(t *testing.T) {
-			ctx := context.Background()
-			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, t.Name())
-			require.NoError(t, err)
-
-			// setup
-			t.Run("step=setup", jt.LoginTimeoutSetup(ctx, reg))
-
-			// cleanup
-			t.Run("step=cleanup", func(t *testing.T) {
-				cmdx.ExecNoErr(t, newJanitorCmd(),
-					"janitor",
-					fmt.Sprintf("--%s", cli.OnlyRequests),
-					jt.GetDSN(),
-				)
-			})
-
-			t.Run("step=validate", jt.LoginTimeoutValidate(ctx, reg.ConsentManager()))
-
-		})
-
-		t.Run("case=consent-timeout", func(t *testing.T) {
-			ctx := context.Background()
-			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, t.Name())
-			require.NoError(t, err)
-
-			// setup
-			t.Run("step=setup", jt.ConsentTimeoutSetup(ctx, reg))
-
-			// run cleanup
-			t.Run("step=cleanup", func(t *testing.T) {
-				cmdx.ExecNoErr(t, newJanitorCmd(),
-					"janitor",
-					fmt.Sprintf("--%s", cli.OnlyRequests),
-					jt.GetDSN(),
-				)
-			})
-
-			// validate
-			t.Run("step=validate", jt.ConsentTimeoutValidate(ctx, reg.ConsentManager()))
-		})
-
-	})
-
-	t.Run("case=login-consent-rejection", func(t *testing.T) {
-		ctx := context.Background()
-
-		t.Run("case=login-rejection", func(t *testing.T) {
-			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, t.Name())
-			require.NoError(t, err)
-
-			// setup
-			t.Run("step=setup", jt.LoginRejectionSetup(ctx, reg))
-
-			// cleanup
-			t.Run("step=cleanup", func(t *testing.T) {
-				cmdx.ExecNoErr(t, newJanitorCmd(),
-					"janitor",
-					fmt.Sprintf("--%s", cli.OnlyRequests),
-					jt.GetDSN(),
-				)
-			})
-
-			// validate
-			t.Run("step=validate", jt.LoginRejectionValidate(ctx, reg.ConsentManager()))
-		})
-
-		t.Run("case=consent-rejection", func(t *testing.T) {
-			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, t.Name())
-			require.NoError(t, err)
-
-			// setup
-			t.Run("step=setup", jt.ConsentRejectionSetup(ctx, reg))
-
-			// cleanup
-			t.Run("step=cleanup", func(t *testing.T) {
-				cmdx.ExecNoErr(t, newJanitorCmd(),
-					"janitor",
-					fmt.Sprintf("--%s", cli.OnlyRequests),
-					jt.GetDSN(),
-				)
-			})
-
-			// validate
-			t.Run("step=validate", jt.ConsentRejectionValidate(ctx, reg.ConsentManager()))
-		})
-	})
-}
-
 func TestJanitorHandler_Arguments(t *testing.T) {
-	cmdx.ExecNoErr(t, cmd.NewRootCmd(nil, nil, nil),
+	cmdx.ExecNoErr(t, cmd.NewRootCmd(),
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		"memory",
 	)
-	cmdx.ExecNoErr(t, cmd.NewRootCmd(nil, nil, nil),
+	cmdx.ExecNoErr(t, cmd.NewRootCmd(),
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyTokens),
 		"memory",
 	)
-	cmdx.ExecNoErr(t, cmd.NewRootCmd(nil, nil, nil),
+	cmdx.ExecNoErr(t, cmd.NewRootCmd(),
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyGrants),
 		"memory",
 	)
 
-	_, _, err := cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err := cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		"memory")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Janitor requires at least one of --tokens, --requests or --grants to be set")
 
-	cmdx.ExecNoErr(t, cmd.NewRootCmd(nil, nil, nil),
+	cmdx.ExecNoErr(t, cmd.NewRootCmd(),
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.Limit, "1000"),
@@ -224,7 +87,7 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 		"memory",
 	)
 
-	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.Limit, "0"),
@@ -232,7 +95,7 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Values for --limit and --batch-size should both be greater than 0")
 
-	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.Limit, "-100"),
@@ -240,7 +103,7 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Values for --limit and --batch-size should both be greater than 0")
 
-	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.BatchSize, "0"),
@@ -248,7 +111,7 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Values for --limit and --batch-size should both be greater than 0")
 
-	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.BatchSize, "-100"),
@@ -256,7 +119,7 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Values for --limit and --batch-size should both be greater than 0")
 
-	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(nil, nil, nil), nil,
+	_, _, err = cmdx.ExecCtx(context.Background(), cmd.NewRootCmd(), nil,
 		"janitor",
 		fmt.Sprintf("--%s", cli.OnlyRequests),
 		fmt.Sprintf("--%s=%s", cli.Limit, "100"),
@@ -267,16 +130,12 @@ func TestJanitorHandler_Arguments(t *testing.T) {
 }
 
 func TestJanitorHandler_PurgeGrantNotAfter(t *testing.T) {
-	ctx := context.Background()
-	testCycles := testhelpers.NewConsentJanitorTestHelper("").GetNotAfterTestCycles()
+	ctx := t.Context()
 
-	require.True(t, len(testCycles) > 0)
-
-	for k, v := range testCycles {
+	for k, v := range testhelpers.NotAfterTestCycles {
 		t.Run(fmt.Sprintf("case=%s", k), func(t *testing.T) {
 			jt := testhelpers.NewConsentJanitorTestHelper(t.Name())
-			reg, err := jt.GetRegistry(ctx, k)
-			require.NoError(t, err)
+			reg := jt.GetRegistry(t)
 
 			// setup test
 			t.Run("step=setup", jt.GrantNotAfterSetup(ctx, reg.GrantManager()))
@@ -287,7 +146,7 @@ func TestJanitorHandler_PurgeGrantNotAfter(t *testing.T) {
 					"janitor",
 					fmt.Sprintf("--%s=%s", cli.KeepIfYounger, v.String()),
 					fmt.Sprintf("--%s", cli.OnlyGrants),
-					jt.GetDSN(),
+					reg.Config().DSN(),
 				)
 			})
 

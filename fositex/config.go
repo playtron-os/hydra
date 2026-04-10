@@ -12,11 +12,13 @@ import (
 
 	"github.com/hashicorp/go-retryablehttp"
 
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/compose"
-	"github.com/ory/fosite/i18n"
-	"github.com/ory/fosite/token/jwt"
+	"github.com/ory/x/httpx"
+
 	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/compose"
+	"github.com/ory/hydra/v2/fosite/i18n"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/hydra/v2/oauth2"
 	"github.com/ory/hydra/v2/persistence"
 	"github.com/ory/hydra/v2/x"
@@ -24,57 +26,69 @@ import (
 	"github.com/ory/x/urlx"
 )
 
-type configDependencies interface {
-	config.Provider
-	persistence.Provider
-	x.HTTPClientProvider
-	GetJWKSFetcherStrategy() fosite.JWKSFetcherStrategy
-	ClientHasher() fosite.Hasher
-	ExtraFositeFactories() []Factory
-}
+type (
+	configDependencies interface {
+		config.Provider
+		persistence.Provider
+		httpx.ClientProvider
+		ClientHasher() fosite.Hasher
+		ExtraFositeFactories() []Factory
+	}
+	Factory func(config fosite.Configurator, storage fosite.Storage, strategy interface{}) interface{}
+	Config  struct {
+		deps configDependencies
 
-type Factory func(config fosite.Configurator, storage interface{}, strategy interface{}) interface{}
+		authorizeEndpointHandlers  fosite.AuthorizeEndpointHandlers
+		tokenEndpointHandlers      fosite.TokenEndpointHandlers
+		tokenIntrospectionHandlers fosite.TokenIntrospectionHandlers
+		revocationHandlers         fosite.RevocationHandlers
+		deviceEndpointHandlers     fosite.DeviceEndpointHandlers
+		jwksFetcherStrategy        fosite.JWKSFetcherStrategy
 
-type Config struct {
-	deps configDependencies
+		*config.DefaultProvider
+	}
+	ConfigProvider interface {
+		OAuth2Config() *Config
+	}
+)
 
-	authorizeEndpointHandlers  fosite.AuthorizeEndpointHandlers
-	tokenEndpointHandlers      fosite.TokenEndpointHandlers
-	tokenIntrospectionHandlers fosite.TokenIntrospectionHandlers
-	revocationHandlers         fosite.RevocationHandlers
-
-	*config.DefaultProvider
-}
-
-var defaultResponseModeHandler = fosite.NewDefaultResponseModeHandler()
-var defaultFactories = []Factory{
-	compose.OAuth2AuthorizeExplicitFactory,
-	compose.OAuth2AuthorizeImplicitFactory,
-	compose.OAuth2ClientCredentialsGrantFactory,
-	compose.OAuth2RefreshTokenGrantFactory,
-	compose.OpenIDConnectExplicitFactory,
-	compose.OpenIDConnectHybridFactory,
-	compose.OpenIDConnectImplicitFactory,
-	compose.OpenIDConnectRefreshFactory,
-	compose.OAuth2TokenRevocationFactory,
-	compose.OAuth2TokenIntrospectionFactory,
-	compose.OAuth2PKCEFactory,
-	compose.RFC7523AssertionGrantFactory,
-	compose.OIDCUserinfoVerifiableCredentialFactory,
-}
+var (
+	defaultResponseModeHandler = fosite.NewDefaultResponseModeHandler()
+	defaultFactories           = []Factory{
+		compose.OAuth2AuthorizeExplicitFactory,
+		compose.OAuth2AuthorizeImplicitFactory,
+		compose.OAuth2ClientCredentialsGrantFactory,
+		compose.OAuth2RefreshTokenGrantFactory,
+		compose.OpenIDConnectExplicitFactory,
+		compose.OpenIDConnectHybridFactory,
+		compose.OpenIDConnectImplicitFactory,
+		compose.OpenIDConnectRefreshFactory,
+		compose.OAuth2TokenRevocationFactory,
+		compose.OAuth2TokenIntrospectionFactory,
+		compose.OAuth2PKCEFactory,
+		compose.RFC7523AssertionGrantFactory,
+		compose.OIDCUserinfoVerifiableCredentialFactory,
+		compose.RFC8628DeviceFactory,
+		compose.RFC8628DeviceAuthorizationTokenFactory,
+		compose.OpenIDConnectDeviceFactory,
+	}
+)
 
 func NewConfig(deps configDependencies) *Config {
-	c := &Config{
+	return &Config{
 		deps:            deps,
 		DefaultProvider: deps.Config(),
 	}
-	return c
 }
 
-func (c *Config) LoadDefaultHandlers(strategy interface{}) {
+func (c *Config) Config() *config.DefaultProvider {
+	return c.deps.Config()
+}
+
+func (c *Config) LoadDefaultHandlers(storage fosite.Storage, strategy interface{}) {
 	factories := append(defaultFactories, c.deps.ExtraFositeFactories()...)
 	for _, factory := range factories {
-		res := factory(c, c.deps.Persister(), strategy)
+		res := factory(c, storage, strategy)
 		if ah, ok := res.(fosite.AuthorizeEndpointHandler); ok {
 			c.authorizeEndpointHandlers.Append(ah)
 		}
@@ -87,11 +101,19 @@ func (c *Config) LoadDefaultHandlers(strategy interface{}) {
 		if rh, ok := res.(fosite.RevocationHandler); ok {
 			c.revocationHandlers.Append(rh)
 		}
+		if dh, ok := res.(fosite.DeviceEndpointHandler); ok {
+			c.deviceEndpointHandlers.Append(dh)
+		}
 	}
 }
 
 func (c *Config) GetJWKSFetcherStrategy(context.Context) fosite.JWKSFetcherStrategy {
-	return c.deps.GetJWKSFetcherStrategy()
+	if c.jwksFetcherStrategy == nil {
+		c.jwksFetcherStrategy = fosite.NewDefaultJWKSFetcherStrategy(fosite.JWKSFetcherWithHTTPClientSource(
+			func(ctx context.Context) *retryablehttp.Client { return c.deps.HTTPClient(ctx) },
+		))
+	}
+	return c.jwksFetcherStrategy
 }
 
 func (c *Config) GetHTTPClient(ctx context.Context) *retryablehttp.Client {
@@ -112,6 +134,11 @@ func (c *Config) GetTokenIntrospectionHandlers(context.Context) (r fosite.TokenI
 
 func (c *Config) GetRevocationHandlers(context.Context) fosite.RevocationHandlers {
 	return c.revocationHandlers
+}
+
+// GetDeviceEndpointHandlers returns the deviceEndpointHandlers
+func (c *Config) GetDeviceEndpointHandlers(context.Context) fosite.DeviceEndpointHandlers {
+	return c.deviceEndpointHandlers
 }
 
 func (c *Config) GetGrantTypeJWTBearerCanSkipClientAuth(context.Context) bool {
@@ -202,7 +229,12 @@ func (c *Config) GetFormPostHTMLTemplate(context.Context) *template.Template {
 
 func (c *Config) GetTokenURLs(ctx context.Context) []string {
 	return stringslice.Unique([]string{
-		c.OAuth2TokenURL(ctx).String(),
+		c.deps.Config().OAuth2TokenURL(ctx).String(),
 		urlx.AppendPaths(c.deps.Config().PublicURL(ctx), oauth2.TokenPath).String(),
 	})
+}
+
+// GetDeviceVerificationURL returns the device verification url
+func (c *Config) GetDeviceVerificationURL(ctx context.Context) string {
+	return urlx.AppendPaths(c.deps.Config().PublicURL(ctx), oauth2.DeviceVerificationPath).String()
 }

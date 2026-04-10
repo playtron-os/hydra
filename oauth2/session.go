@@ -6,6 +6,8 @@ package oauth2
 import (
 	"bytes"
 	"context"
+	"slices"
+	"testing"
 	"time"
 
 	jjson "github.com/go-jose/go-jose/v3/json"
@@ -14,13 +16,11 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/openid"
-	"github.com/ory/fosite/token/jwt"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/flow"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/handler/openid"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/x/logrusx"
-	"github.com/ory/x/stringslice"
 )
 
 // swagger:ignore
@@ -33,42 +33,42 @@ type Session struct {
 	ExcludeNotBeforeClaim  bool                   `json:"exclude_not_before_claim"`
 	AllowedTopLevelClaims  []string               `json:"allowed_top_level_claims"`
 	MirrorTopLevelClaims   bool                   `json:"mirror_top_level_claims"`
-
-	Flow *flow.Flow `json:"-"`
 }
 
-func NewSession(subject string) *Session {
-	ctx := context.Background()
-	provider := config.MustNew(ctx, logrusx.New("", ""))
-	return NewSessionWithCustomClaims(ctx, provider, subject)
+func NewTestSession(t testing.TB, subject string) *Session {
+	provider := config.MustNew(t, logrusx.New("", ""))
+	return NewSessionWithCustomClaims(t.Context(), provider, subject)
 }
 
 func NewSessionWithCustomClaims(ctx context.Context, p *config.DefaultProvider, subject string) *Session {
-	allowedTopLevelClaims := p.AllowedTopLevelClaims(ctx)
-	mirrorTopLevelClaims := p.MirrorTopLevelClaims(ctx)
 	return &Session{
 		DefaultSession: &openid.DefaultSession{
-			Claims:  new(jwt.IDTokenClaims),
-			Headers: new(jwt.Headers),
-			Subject: subject,
+			Claims:    new(jwt.IDTokenClaims),
+			Headers:   new(jwt.Headers),
+			Subject:   subject,
+			ExpiresAt: make(map[fosite.TokenType]time.Time),
 		},
 		Extra:                 map[string]interface{}{},
-		AllowedTopLevelClaims: allowedTopLevelClaims,
-		MirrorTopLevelClaims:  mirrorTopLevelClaims,
+		AllowedTopLevelClaims: p.AllowedTopLevelClaims(ctx),
+		MirrorTopLevelClaims:  p.MirrorTopLevelClaims(ctx),
+		ExcludeNotBeforeClaim: p.ExcludeNotBeforeClaim(ctx),
 	}
 }
 
 func (s *Session) GetJWTClaims() jwt.JWTClaimsContainer {
-	// a slice of claims that are reserved and should not be overridden
-	reservedClaims := []string{"iss", "sub", "aud", "exp", "nbf", "iat", "jti", "client_id", "scp", "ext"}
-
 	// remove any reserved claims from the custom claims
-	allowedClaimsFromConfigWithoutReserved := stringslice.Filter(s.AllowedTopLevelClaims, func(s string) bool {
-		return stringslice.Has(reservedClaims, s)
+	allowedClaimsFromConfigWithoutReserved := slices.DeleteFunc(s.AllowedTopLevelClaims, func(s string) bool {
+		switch s {
+		// these claims are reserved and should not be overridden
+		case "iss", "sub", "aud", "exp", "nbf", "iat", "jti", "client_id", "scp", "ext":
+			return true
+		}
+		return false
 	})
 
 	// our new extra map which will be added to the jwt
-	topLevelExtraWithMirrorExt := map[string]interface{}{}
+	topLevelExtraWithMirrorExt := make(map[string]interface{}, len(allowedClaimsFromConfigWithoutReserved)+2)
+	topLevelExtraWithMirrorExt["client_id"] = s.ClientID
 
 	// setting every allowed claim top level in jwt with respective value
 	for _, allowedClaim := range allowedClaimsFromConfigWithoutReserved {
@@ -107,11 +107,6 @@ func (s *Session) GetJWTClaims() jwt.JWTClaimsContainer {
 		claims.NotBefore = claims.IssuedAt
 	}
 
-	if claims.Extra == nil {
-		claims.Extra = map[string]interface{}{}
-	}
-
-	claims.Extra["client_id"] = s.ClientID
 	return claims
 }
 
@@ -193,4 +188,18 @@ func (s *Session) UnmarshalJSON(original []byte) (err error) {
 	}
 
 	return nil
+}
+
+// GetExtraClaims implements ExtraClaimsSession for Session.
+// The returned value can be modified in-place.
+func (s *Session) GetExtraClaims() map[string]interface{} {
+	if s == nil {
+		return nil
+	}
+
+	if s.Extra == nil {
+		s.Extra = make(map[string]interface{})
+	}
+
+	return s.Extra
 }

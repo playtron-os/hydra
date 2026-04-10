@@ -9,20 +9,14 @@ import (
 	"io"
 	"time"
 
-	"github.com/ory/x/servicelocatorx"
-
-	"github.com/ory/hydra/v2/persistence"
-
 	"github.com/pkg/errors"
-
-	"github.com/ory/x/flagx"
-
 	"github.com/spf13/cobra"
 
 	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/persistence"
 	"github.com/ory/x/configx"
-	"github.com/ory/x/errorsx"
+	"github.com/ory/x/flagx"
 )
 
 const (
@@ -40,16 +34,12 @@ const (
 )
 
 type JanitorHandler struct {
-	slOpts []servicelocatorx.Option
-	dOpts  []driver.OptionsModifier
-	cOpts  []configx.OptionModifier
+	dOpts []driver.OptionsModifier
 }
 
-func NewJanitorHandler(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) *JanitorHandler {
+func newJanitorHandler(dOpts []driver.OptionsModifier) *JanitorHandler {
 	return &JanitorHandler{
-		slOpts: slOpts,
-		dOpts:  dOpts,
-		cOpts:  cOpts,
+		dOpts: dOpts,
 	}
 }
 
@@ -89,12 +79,11 @@ func (*JanitorHandler) Args(cmd *cobra.Command, args []string) error {
 }
 
 func (j *JanitorHandler) RunE(cmd *cobra.Command, args []string) error {
-	return purge(cmd, args, servicelocatorx.NewOptions(j.slOpts...), j.dOpts)
+	return purge(cmd, args, j.dOpts)
 }
 
-func purge(cmd *cobra.Command, args []string, sl *servicelocatorx.Options, dOpts []driver.OptionsModifier) error {
+func purge(cmd *cobra.Command, args []string, dOpts []driver.OptionsModifier) error {
 	ctx := cmd.Context()
-	var d driver.Registry
 
 	co := []configx.OptionModifier{
 		configx.WithFlags(cmd.Flags()),
@@ -126,10 +115,10 @@ func purge(cmd *cobra.Command, args []string, sl *servicelocatorx.Options, dOpts
 	do := append(dOpts,
 		driver.DisableValidation(),
 		driver.DisablePreloading(),
-		driver.WithOptions(co...),
+		driver.WithConfigOptions(co...),
 	)
 
-	d, err := driver.New(ctx, sl, do)
+	d, err := driver.New(ctx, do...)
 	if err != nil {
 		return errors.Wrap(err, "Could not create driver")
 	}
@@ -184,9 +173,9 @@ type cleanupRoutine func(ctx context.Context, notAfter time.Time, limit int, bat
 func cleanup(out io.Writer, cr cleanupRoutine, routineName string) cleanupRoutine {
 	return func(ctx context.Context, notAfter time.Time, limit int, batchSize int) error {
 		if err := cr(ctx, notAfter, limit, batchSize); err != nil {
-			return errors.Wrap(errorsx.WithStack(err), fmt.Sprintf("Could not cleanup inactive %s", routineName))
+			return errors.Wrap(errors.WithStack(err), fmt.Sprintf("Could not cleanup inactive %s", routineName))
 		}
-		fmt.Fprintf(out, "Successfully completed Janitor run on %s\n", routineName)
+		_, _ = fmt.Fprintf(out, "Successfully completed Janitor run on %s\n", routineName)
 		return nil
 	}
 }

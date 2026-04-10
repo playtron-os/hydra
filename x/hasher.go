@@ -6,31 +6,18 @@ package x
 import (
 	"context"
 
-	"github.com/ory/fosite"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/ory/hydra/v2/fosite"
 	"github.com/ory/x/hasherx"
-
-	"go.opentelemetry.io/otel"
-
-	"github.com/ory/x/errorsx"
+	"github.com/ory/x/otelx"
 )
-
-const tracingComponent = "github.com/ory/hydra/x"
 
 var _ fosite.Hasher = (*Hasher)(nil)
 
-type HashAlgorithm string
-
-func (a HashAlgorithm) String() string {
-	return string(a)
-}
-
-const (
-	HashAlgorithmBCrypt = HashAlgorithm("bcrypt")
-	HashAlgorithmPBKDF2 = HashAlgorithm("pbkdf2")
-)
-
 // Hasher implements fosite.Hasher.
 type Hasher struct {
+	t      otelx.Provider
 	c      config
 	bcrypt *hasherx.Bcrypt
 	pbkdf2 *hasherx.PBKDF2
@@ -39,38 +26,44 @@ type Hasher struct {
 type config interface {
 	hasherx.PBKDF2Configurator
 	hasherx.BCryptConfigurator
-	GetHasherAlgorithm(ctx context.Context) HashAlgorithm
+	GetHasherAlgorithm(ctx context.Context) string
 }
 
 // NewHasher returns a new BCrypt instance.
-func NewHasher(c config) *Hasher {
+func NewHasher(t otelx.Provider, c config) *Hasher {
 	return &Hasher{
+		t:      t,
 		c:      c,
 		bcrypt: hasherx.NewHasherBcrypt(c),
 		pbkdf2: hasherx.NewHasherPBKDF2(c),
 	}
 }
 
-func (b *Hasher) Hash(ctx context.Context, data []byte) ([]byte, error) {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "x.hasher.Hash")
-	defer span.End()
+const (
+	hashAlgorithmBCrypt = "bcrypt"
+	hashAlgorithmPBKDF2 = "pbkdf2"
+)
 
-	switch b.c.GetHasherAlgorithm(ctx) {
-	case HashAlgorithmBCrypt:
-		return b.bcrypt.Generate(ctx, data)
-	case HashAlgorithmPBKDF2:
+func (h *Hasher) Hash(ctx context.Context, data []byte) (_ []byte, err error) {
+	ctx, span := h.t.Tracer(ctx).Tracer().Start(ctx, "x.hasher.Hash")
+	defer otelx.End(span, &err)
+
+	alg := h.c.GetHasherAlgorithm(ctx)
+	span.SetAttributes(attribute.String("algorithm", alg))
+
+	switch alg {
+	case hashAlgorithmBCrypt:
+		return h.bcrypt.Generate(ctx, data)
+	case hashAlgorithmPBKDF2:
 		fallthrough
 	default:
-		return b.pbkdf2.Generate(ctx, data)
+		return h.pbkdf2.Generate(ctx, data)
 	}
 }
 
-func (b *Hasher) Compare(ctx context.Context, hash, data []byte) error {
-	_, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "x.hasher.Hash")
-	defer span.End()
+func (h *Hasher) Compare(ctx context.Context, hash, data []byte) (err error) {
+	ctx, span := h.t.Tracer(ctx).Tracer().Start(ctx, "x.hasher.Compare")
+	defer otelx.End(span, &err)
 
-	if err := hasherx.Compare(ctx, data, hash); err != nil {
-		return errorsx.WithStack(err)
-	}
-	return nil
+	return hasherx.Compare(ctx, data, hash)
 }

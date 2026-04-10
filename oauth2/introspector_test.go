@@ -6,37 +6,36 @@ package oauth2_test
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	hydra "github.com/ory/hydra-client-go/v2"
-
-	"github.com/ory/x/httprouterx"
-
-	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/contextx"
-
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ory/fosite"
+	hydra "github.com/ory/hydra-client-go/v2"
+	"github.com/ory/hydra/v2/driver"
+	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/internal"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/httprouterx"
 )
 
 func TestIntrospectorSDK(t *testing.T) {
-	ctx := context.Background()
-	conf := internal.NewConfigurationWithDefaults()
-	conf.MustSet(ctx, config.KeyScopeStrategy, "wildcard")
-	conf.MustSet(ctx, config.KeyIssuerURL, "https://foobariss")
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
+	t.Parallel()
 
-	internal.MustEnsureRegistryKeys(ctx, reg, x.OpenIDConnectKeyName)
-	internal.AddFositeExamples(reg)
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyScopeStrategy: "wildcard",
+		config.KeyIssuerURL:     "https://foobariss",
+	})))
+
+	testhelpers.MustEnsureRegistryKeys(t, reg, x.OpenIDConnectKeyName)
+	internal.AddFositeExamples(t, reg)
 
 	tokens := Tokens(reg.OAuth2ProviderConfig(), 4)
 
@@ -45,19 +44,17 @@ func TestIntrospectorSDK(t *testing.T) {
 	c.Scope = "fosite,openid,photos,offline,foo.*"
 	require.NoError(t, reg.ClientManager().UpdateClient(context.TODO(), c))
 
-	router := x.NewRouterAdmin(conf.AdminURL)
-	handler := reg.OAuth2Handler()
-	handler.SetRoutes(router, &httprouterx.RouterPublic{Router: router.Router}, func(h http.Handler) http.Handler {
-		return h
-	})
+	router := httprouterx.NewTestRouterAdminWithPrefix(t)
+	handler := oauth2.NewHandler(reg)
+	handler.SetAdminRoutes(router)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
 	now := time.Now().UTC().Round(time.Minute)
-	createAccessTokenSession("alice", "my-client", tokens[0][0], now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"})
-	createAccessTokenSession("siri", "my-client", tokens[1][0], now.Add(-time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"})
-	createAccessTokenSession("my-client", "my-client", tokens[2][0], now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"hydra.introspect"})
-	createAccessTokenSessionPairwise("alice", "my-client", tokens[3][0], now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"}, "alice-obfuscated")
+	createAccessTokenSession(t, "alice", "my-client", tokens[0].sig, now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"})
+	createAccessTokenSession(t, "siri", "my-client", tokens[1].sig, now.Add(-time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"})
+	createAccessTokenSession(t, "my-client", "my-client", tokens[2].sig, now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"hydra.introspect"})
+	createAccessTokenSessionPairwise(t, "alice", "my-client", tokens[3].sig, now.Add(time.Hour), reg.OAuth2Storage(), fosite.Arguments{"core", "foo.*"}, "alice-obfuscated")
 
 	t.Run("TestIntrospect", func(t *testing.T) {
 		for k, c := range []struct {
@@ -75,7 +72,7 @@ func TestIntrospectorSDK(t *testing.T) {
 			},
 			{
 				description:    "should fail because token is expired",
-				token:          tokens[1][1],
+				token:          tokens[1].tok,
 				expectInactive: true,
 			},
 			// {
@@ -92,18 +89,18 @@ func TestIntrospectorSDK(t *testing.T) {
 			// },
 			{
 				description:    "should fail because scope `bar` was requested but only `foo` is granted",
-				token:          tokens[0][1],
+				token:          tokens[0].tok,
 				expectInactive: true,
 				scopes:         []string{"bar"},
 			},
 			{
 				description:    "should pass",
-				token:          tokens[0][1],
+				token:          tokens[0].tok,
 				expectInactive: false,
 			},
 			{
 				description:    "should pass using bearer authorization",
-				token:          tokens[0][1],
+				token:          tokens[0].tok,
 				expectInactive: false,
 				scopes:         []string{"foo.bar"},
 				assert: func(t *testing.T, c *hydra.IntrospectedOAuth2Token) {
@@ -116,7 +113,7 @@ func TestIntrospectorSDK(t *testing.T) {
 			},
 			{
 				description:    "should pass using regular authorization",
-				token:          tokens[0][1],
+				token:          tokens[0].tok,
 				expectInactive: false,
 				scopes:         []string{"foo.bar"},
 				assert: func(t *testing.T, c *hydra.IntrospectedOAuth2Token) {
@@ -130,7 +127,7 @@ func TestIntrospectorSDK(t *testing.T) {
 			},
 			{
 				description:    "should pass and check for obfuscated subject",
-				token:          tokens[3][1],
+				token:          tokens[3].tok,
 				expectInactive: false,
 				scopes:         []string{"foo.bar"},
 				assert: func(t *testing.T, c *hydra.IntrospectedOAuth2Token) {
@@ -152,11 +149,7 @@ func TestIntrospectorSDK(t *testing.T) {
 					Token(c.token).Scope(strings.Join(c.scopes, " ")).Execute()
 				require.NoError(t, err)
 
-				if c.expectInactive {
-					assert.False(t, ctx.Active)
-				} else {
-					assert.True(t, ctx.Active)
-				}
+				assert.Equal(t, c.expectInactive, !ctx.Active)
 
 				if !c.expectInactive && c.assert != nil {
 					c.assert(t, ctx)

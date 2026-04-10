@@ -1,66 +1,34 @@
 {
-  "ID": "challenge-0003",
-  "NID": "00000000-0000-0000-0000-000000000000",
-  "RequestedScope": [
+  "i": "challenge-0003",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
     "requested_scope-0003_1"
   ],
-  "RequestedAudience": [],
-  "LoginSkip": true,
-  "Subject": "subject-0003",
-  "OpenIDConnectContext": {
+  "s": "subject-0003",
+  "oc": {
     "display": "display-0003"
   },
-  "Client": null,
-  "ClientID": "",
-  "RequestURL": "http://request/0003",
-  "SessionID": "auth_session-0003",
-  "IdentityProviderSessionID": "",
-  "LoginVerifier": "verifier-0003",
-  "LoginCSRF": "csrf-0003",
-  "LoginInitializedAt": null,
-  "RequestedAt": "0001-01-01T00:00:00Z",
-  "State": 128,
-  "LoginRemember": true,
-  "LoginRememberFor": 3,
-  "LoginExtendSessionLifespan": false,
-  "ACR": "acr-0003",
-  "AMR": [],
-  "ForceSubjectIdentifier": "force_subject_id-0003",
-  "Context": {},
-  "LoginWasUsed": true,
-  "LoginError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "LoginAuthenticatedAt": null,
-  "ConsentChallengeID": "challenge-0003",
-  "ConsentSkip": true,
-  "ConsentVerifier": "verifier-0003",
-  "ConsentCSRF": "csrf-0003",
-  "GrantedScope": [
+  "ci": "client-0014",
+  "r": "http://request/0003",
+  "si": "auth_session-0003",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0003",
+  "ct": {},
+  "la": null,
+  "dh": null,
+  "cc": "challenge-0003",
+  "cs": true,
+  "gs": [
     "granted_scope-0003_1"
   ],
-  "GrantedAudience": [],
-  "ConsentRemember": true,
-  "ConsentRememberFor": 3,
-  "ConsentHandledAt": null,
-  "ConsentWasHandled": true,
-  "ConsentError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "SessionIDToken": {
+  "ce": true,
+  "cf": 3,
+  "ch": null,
+  "cx": null,
+  "st": {
     "session_id_token-0003": "0003"
   },
-  "SessionAccessToken": {
+  "sa": {
     "session_access_token-0003": "0003"
   }
 }

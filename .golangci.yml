@@ -1,18 +1,21 @@
+version: "2"
+
 linters:
   enable:
-    - gosec
     - errcheck
-    - gosimple
-    - bodyclose
-    - staticcheck
-    - goimports
-  disable:
     - ineffassign
-    - deadcode
+    - staticcheck
     - unused
-    - structcheck
+  settings:
+    staticcheck:
+      checks:
+        - "-SA1019"
 
-run:
-  skip-files:
-    - ".+_test.go"
-    - ".+_test_.+.go"
+  exclusions:
+    rules:
+      - path: '_test\.go'
+        linters:
+          - gosec
+      - path: "internal/httpclient"
+        linters:
+          - errcheck

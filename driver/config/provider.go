@@ -5,29 +5,29 @@ package config
 
 import (
 	"context"
+	"crypto/sha512"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
+	"testing"
 	"time"
 
-	"github.com/pkg/errors"
-
-	"github.com/ory/x/hasherx"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gofrs/uuid"
-
-	"github.com/ory/x/otelx"
+	"github.com/pkg/errors"
 
 	"github.com/ory/hydra/v2/spec"
-	"github.com/ory/x/dbal"
-
-	"github.com/ory/x/configx"
-
-	"github.com/ory/x/logrusx"
-
 	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
 	"github.com/ory/x/contextx"
+	"github.com/ory/x/dbal"
+	"github.com/ory/x/hasherx"
+	"github.com/ory/x/logrusx"
+	"github.com/ory/x/otelx"
+	"github.com/ory/x/randx"
 	"github.com/ory/x/stringslice"
 	"github.com/ory/x/urlx"
 )
@@ -49,6 +49,7 @@ const (
 	KeyOIDCDiscoverySupportedClaims              = "webfinger.oidc_discovery.supported_claims"
 	KeyOIDCDiscoverySupportedScope               = "webfinger.oidc_discovery.supported_scope"
 	KeyOIDCDiscoveryUserinfoEndpoint             = "webfinger.oidc_discovery.userinfo_url"
+	KeyOAuth2DeviceAuthorisationURL              = "webfinger.oidc_discovery.device_authorization_url"
 	KeySubjectTypesSupported                     = "oidc.subject_identifiers.supported_types"
 	KeyDefaultClientScope                        = "oidc.dynamic_client_registration.default_scope"
 	KeyDSN                                       = "dsn"
@@ -63,6 +64,7 @@ const (
 	KeyCookieDomain                              = "serve.cookies.domain"
 	KeyCookieSecure                              = "serve.cookies.secure"
 	KeyCookieLoginCSRFName                       = "serve.cookies.names.login_csrf"
+	KeyCookieDeviceCSRFName                      = "serve.cookies.names.device_csrf"
 	KeyCookieConsentCSRFName                     = "serve.cookies.names.consent_csrf"
 	KeyCookieSessionName                         = "serve.cookies.names.session"
 	KeyCookieSessionPath                         = "serve.cookies.paths.session"
@@ -72,15 +74,20 @@ const (
 	KeyVerifiableCredentialsNonceLifespan        = "ttl.vc_nonce"      // #nosec G101
 	KeyIDTokenLifespan                           = "ttl.id_token"      // #nosec G101
 	KeyAuthCodeLifespan                          = "ttl.auth_code"
+	KeyDeviceAndUserCodeLifespan                 = "ttl.device_user_code"
+	KeyAuthenticationSessionLifespan             = "ttl.authentication_session"
 	KeyScopeStrategy                             = "strategies.scope"
 	KeyGetCookieSecrets                          = "secrets.cookie"
 	KeyGetSystemSecret                           = "secrets.system"
+	KeyPaginationSecrets                         = "secrets.pagination"
 	KeyLogoutRedirectURL                         = "urls.post_logout_redirect"
 	KeyLoginURL                                  = "urls.login"
 	KeyRegistrationURL                           = "urls.registration"
 	KeyLogoutURL                                 = "urls.logout"
 	KeyConsentURL                                = "urls.consent"
 	KeyErrorURL                                  = "urls.error"
+	KeyDeviceVerificationURL                     = "urls.device.verification"
+	KeyDeviceDoneURL                             = "urls.device.success"
 	KeyPublicURL                                 = "urls.self.public"
 	KeyAdminURL                                  = "urls.self.admin"
 	KeyIssuerURL                                 = "urls.self.issuer"
@@ -92,6 +99,10 @@ const (
 	KeyDBIgnoreUnknownTableColumns               = "db.ignore_unknown_table_columns"
 	KeySubjectIdentifierAlgorithmSalt            = "oidc.subject_identifiers.pairwise.salt"
 	KeyPublicAllowDynamicRegistration            = "oidc.dynamic_client_registration.enabled"
+	KeyDeviceAuthTokenPollingInterval            = "oauth2.device_authorization.token_polling_interval" // #nosec G101
+	KeyDeviceAuthUserCodeEntropyPreset           = "oauth2.device_authorization.user_code.entropy_preset"
+	KeyDeviceAuthUserCodeLength                  = "oauth2.device_authorization.user_code.length"
+	KeyDeviceAuthUserCodeCharacterSet            = "oauth2.device_authorization.user_code.character_set"
 	KeyPKCEEnforced                              = "oauth2.pkce.enforced"
 	KeyPKCEEnforcedForPublicClients              = "oauth2.pkce.enforced_for_public_clients"
 	KeyLogLevel                                  = "log.level"
@@ -101,6 +112,8 @@ const (
 	KeyExcludeNotBeforeClaim                     = "oauth2.exclude_not_before_claim"
 	KeyAllowedTopLevelClaims                     = "oauth2.allowed_top_level_claims"
 	KeyMirrorTopLevelClaims                      = "oauth2.mirror_top_level_claims"
+	KeyRefreshTokenRotationGracePeriod           = "oauth2.grant.refresh_token.rotation_grace_period"      // #nosec G101
+	KeyRefreshTokenRotationGraceReuseCount       = "oauth2.grant.refresh_token.rotation_grace_reuse_count" // #nosec G101
 	KeyOAuth2GrantJWTIDOptional                  = "oauth2.grant.jwt.jti_optional"
 	KeyOAuth2GrantJWTIssuedDateOptional          = "oauth2.grant.jwt.iat_optional"
 	KeyOAuth2GrantJWTMaxDuration                 = "oauth2.grant.jwt.max_ttl"
@@ -122,37 +135,48 @@ type DefaultProvider struct {
 	c contextx.Contextualizer
 }
 
-func (p *DefaultProvider) GetHasherAlgorithm(ctx context.Context) x.HashAlgorithm {
-	switch strings.ToLower(p.getProvider(ctx).String(KeyHasherAlgorithm)) {
-	case x.HashAlgorithmBCrypt.String():
-		return x.HashAlgorithmBCrypt
-	case x.HashAlgorithmPBKDF2.String():
-		fallthrough
-	default:
-		return x.HashAlgorithmPBKDF2
-	}
+func (p *DefaultProvider) GetHasherAlgorithm(ctx context.Context) string {
+	return strings.ToLower(p.getProvider(ctx).String(KeyHasherAlgorithm))
 }
 
 func (p *DefaultProvider) HasherBcryptConfig(ctx context.Context) *hasherx.BCryptConfig {
+	var cost uint32
+	costInt := int64(p.GetBCryptCost(ctx))
+	if costInt < 0 {
+		cost = 10
+	} else if costInt > math.MaxUint32 {
+		cost = math.MaxUint32
+	} else {
+		cost = uint32(costInt)
+	}
 	return &hasherx.BCryptConfig{
-		Cost: uint32(p.GetBCryptCost(ctx)),
+		Cost: cost,
 	}
 }
 
 func (p *DefaultProvider) HasherPBKDF2Config(ctx context.Context) *hasherx.PBKDF2Config {
+	var iters uint32
+	itersInt := p.getProvider(ctx).Int64(KeyPBKDF2Iterations)
+	if itersInt < 1 {
+		iters = 1
+	} else if int64(itersInt) > math.MaxUint32 {
+		iters = math.MaxUint32
+	} else {
+		iters = uint32(itersInt)
+	}
+
 	return &hasherx.PBKDF2Config{
 		Algorithm:  "sha256",
-		Iterations: uint32(p.getProvider(ctx).Int(KeyPBKDF2Iterations)),
+		Iterations: iters,
 		SaltLength: 16,
 		KeyLength:  32,
 	}
 }
 
-func MustNew(ctx context.Context, l *logrusx.Logger, opts ...configx.OptionModifier) *DefaultProvider {
-	p, err := New(ctx, l, opts...)
-	if err != nil {
-		l.WithError(err).Fatalf("Unable to load config.")
-	}
+func MustNew(t testing.TB, l *logrusx.Logger, opts ...configx.OptionModifier) *DefaultProvider {
+	ctxt := contextx.NewTestConfigProvider(spec.ConfigValidationSchema, opts...)
+	p, err := New(t.Context(), l, ctxt, opts...)
+	require.NoError(t, err)
 	return p
 }
 
@@ -160,7 +184,7 @@ func (p *DefaultProvider) getProvider(ctx context.Context) *configx.Provider {
 	return p.c.Config(ctx, p.p)
 }
 
-func New(ctx context.Context, l *logrusx.Logger, opts ...configx.OptionModifier) (*DefaultProvider, error) {
+func New(ctx context.Context, l *logrusx.Logger, ctxt contextx.Contextualizer, opts ...configx.OptionModifier) (*DefaultProvider, error) {
 	opts = append(
 		[]configx.OptionModifier{
 			configx.WithStderrValidationReporter(),
@@ -174,7 +198,7 @@ func New(ctx context.Context, l *logrusx.Logger, opts ...configx.OptionModifier)
 	if err != nil {
 		return nil, err
 	}
-	return NewCustom(l, p, &contextx.Default{}), nil
+	return NewCustom(l, p, ctxt), nil
 }
 
 func NewCustom(l *logrusx.Logger, p *configx.Provider, ctxt contextx.Contextualizer) *DefaultProvider {
@@ -182,14 +206,21 @@ func NewCustom(l *logrusx.Logger, p *configx.Provider, ctxt contextx.Contextuali
 	return &DefaultProvider{l: l, p: p, c: ctxt}
 }
 
+// Deprecated: use context-based test setters
 func (p *DefaultProvider) Set(ctx context.Context, key string, value interface{}) error {
 	return p.getProvider(ctx).Set(key, value)
 }
 
+// Deprecated: use context-based test setters
 func (p *DefaultProvider) MustSet(ctx context.Context, key string, value interface{}) {
 	if err := p.Set(ctx, key, value); err != nil {
 		p.l.WithError(err).Fatalf("Unable to set \"%s\" to \"%s\".", key, value)
 	}
+}
+
+// Deprecated: use context-based test setters
+func (p *DefaultProvider) Delete(ctx context.Context, key string) {
+	p.getProvider(ctx).Delete(key)
 }
 
 func (p *DefaultProvider) Source(ctx context.Context) *configx.Provider {
@@ -222,26 +253,23 @@ func (p *DefaultProvider) MirrorTopLevelClaims(ctx context.Context) bool {
 }
 
 func (p *DefaultProvider) SubjectTypesSupported(ctx context.Context, additionalSources ...AccessTokenStrategySource) []string {
-	types := stringslice.Filter(
-		p.getProvider(ctx).StringsF(KeySubjectTypesSupported, []string{"public"}),
-		func(s string) bool {
-			return !(s == "public" || s == "pairwise")
-		},
-	)
-
-	if len(types) == 0 {
-		types = []string{"public"}
+	public, pairwise := false, false
+	for _, t := range p.getProvider(ctx).StringsF(KeySubjectTypesSupported, []string{"public"}) {
+		switch t {
+		case "public":
+			public = true
+		case "pairwise":
+			pairwise = true
+		}
 	}
 
-	if stringslice.Has(types, "pairwise") {
+	// when neither public nor pairwise are set, force public
+	public = public || !pairwise
+
+	if pairwise {
 		if p.AccessTokenStrategy(ctx, additionalSources...) == AccessTokenJWTStrategy {
 			p.l.Warn(`The pairwise subject identifier algorithm is not supported by the JWT OAuth 2.0 Access Token Strategy and is thus being disabled. Please remove "pairwise" from oidc.subject_identifiers.supported_types" (e.g. oidc.subject_identifiers.supported_types=public) or set strategies.access_token to "opaque".`)
-			types = stringslice.Filter(
-				types,
-				func(s string) bool {
-					return !(s == "public")
-				},
-			)
+			pairwise = false
 		} else if len(p.SubjectIdentifierAlgorithmSalt(ctx)) < 8 {
 			p.l.Fatalf(
 				`The pairwise subject identifier algorithm was set but length of oidc.subject_identifier.salt is too small (%d < 8), please set oidc.subject_identifiers.pairwise.salt to a random string with 8 characters or more.`,
@@ -250,6 +278,13 @@ func (p *DefaultProvider) SubjectTypesSupported(ctx context.Context, additionalS
 		}
 	}
 
+	types := make([]string, 0, 2)
+	if public {
+		types = append(types, "public")
+	}
+	if pairwise {
+		types = append(types, "pairwise")
+	}
 	return types
 }
 
@@ -353,23 +388,78 @@ func (p *DefaultProvider) LogoutRedirectURL(ctx context.Context) *url.URL {
 }
 
 func (p *DefaultProvider) publicFallbackURL(ctx context.Context, path string) *url.URL {
-	if len(p.PublicURL(ctx).String()) > 0 {
-		return urlx.AppendPaths(p.PublicURL(ctx), path)
+	if publicURL := p.PublicURL(ctx); len(publicURL.String()) > 0 {
+		return urlx.AppendPaths(publicURL, path)
 	}
-	return p.fallbackURL(ctx, path, p.host(PublicInterface), p.port(PublicInterface))
+	return p.fallbackURL(ctx, path, p.ServePublic(ctx))
 }
 
-func (p *DefaultProvider) fallbackURL(ctx context.Context, path string, host string, port int) *url.URL {
-	var u url.URL
-	u.Scheme = "http"
-	if tls := p.TLS(ctx, PublicInterface); tls.Enabled() || !p.IsDevelopmentMode(ctx) {
+func (p *DefaultProvider) fallbackURL(ctx context.Context, path string, serve *configx.Serve) *url.URL {
+	u := url.URL{
+		Scheme: "http",
+		Host:   serve.GetAddress(),
+	}
+	if serve.TLS.Enabled || !p.IsDevelopmentMode(ctx) {
 		u.Scheme = "https"
 	}
-	if host == "" {
-		u.Host = fmt.Sprintf("%s:%d", "localhost", port)
+	if serve.Host == "" {
+		u.Host = fmt.Sprintf("%s:%d", "localhost", serve.Port)
 	}
 	u.Path = path
 	return &u
+}
+
+// GetDeviceAndUserCodeLifespan returns the device_code and user_code lifespan. Defaults to 15 minutes.
+func (p *DefaultProvider) GetDeviceAndUserCodeLifespan(ctx context.Context) time.Duration {
+	return p.p.DurationF(KeyDeviceAndUserCodeLifespan, time.Minute*15)
+}
+
+// GetAuthenticationSessionLifespan returns the authentication_session lifespan.
+func (p *DefaultProvider) GetAuthenticationSessionLifespan(ctx context.Context) time.Duration {
+	lifespan := p.p.Duration(KeyAuthenticationSessionLifespan)
+	if lifespan > time.Hour*24*180 {
+		return time.Hour * 24 * 180
+	}
+	return lifespan
+}
+
+// GetDeviceAuthTokenPollingInterval returns device grant token endpoint polling interval. Defaults to 5 seconds.
+func (p *DefaultProvider) GetDeviceAuthTokenPollingInterval(ctx context.Context) time.Duration {
+	return p.p.DurationF(KeyDeviceAuthTokenPollingInterval, time.Second*5)
+}
+
+func (p *DefaultProvider) userCodeEntropyPreset(t string) (int, []rune) {
+	switch t {
+	default:
+		p.l.Errorf(`invalid user code entropy preset %q, allowed values are "high", "medium", or "low"`, t)
+		fallthrough
+	case "high":
+		return 8, randx.AlphaNumNoAmbiguous
+	case "medium":
+		return 8, randx.AlphaUpper
+	case "low":
+		return 9, randx.Numeric
+	}
+}
+
+// GetUserCodeLength returns configured user_code length
+func (p *DefaultProvider) GetUserCodeLength(ctx context.Context) int {
+	if l := p.getProvider(ctx).Int(KeyDeviceAuthUserCodeLength); l > 0 {
+		return l
+	}
+	k := p.getProvider(ctx).StringF(KeyDeviceAuthUserCodeEntropyPreset, "high")
+	l, _ := p.userCodeEntropyPreset(k)
+	return l
+}
+
+// GetUserCodeSymbols returns configured user_code allowed symbols
+func (p *DefaultProvider) GetUserCodeSymbols(ctx context.Context) []rune {
+	if s := p.getProvider(ctx).String(KeyDeviceAuthUserCodeCharacterSet); s != "" {
+		return []rune(s)
+	}
+	k := p.getProvider(ctx).StringF(KeyDeviceAuthUserCodeEntropyPreset, "high")
+	_, s := p.userCodeEntropyPreset(k)
+	return s
 }
 
 func (p *DefaultProvider) LoginURL(ctx context.Context) *url.URL {
@@ -392,6 +482,16 @@ func (p *DefaultProvider) ErrorURL(ctx context.Context) *url.URL {
 	return urlRoot(p.getProvider(ctx).RequestURIF(KeyErrorURL, p.publicFallbackURL(ctx, "oauth2/fallbacks/error")))
 }
 
+// DeviceVerificationURL returns user_code verification page URL. Defaults to "oauth2/fallbacks/device".
+func (p *DefaultProvider) DeviceVerificationURL(ctx context.Context) *url.URL {
+	return urlRoot(p.getProvider(ctx).URIF(KeyDeviceVerificationURL, p.publicFallbackURL(ctx, "oauth2/fallbacks/device")))
+}
+
+// DeviceDoneURL returns the post device authorization URL. Defaults to "oauth2/fallbacks/device/done".
+func (p *DefaultProvider) DeviceDoneURL(ctx context.Context) *url.URL {
+	return urlRoot(p.getProvider(ctx).RequestURIF(KeyDeviceDoneURL, p.publicFallbackURL(ctx, "oauth2/fallbacks/device/done")))
+}
+
 func (p *DefaultProvider) PublicURL(ctx context.Context) *url.URL {
 	return urlRoot(p.getProvider(ctx).RequestURIF(KeyPublicURL, p.IssuerURL(ctx)))
 }
@@ -399,15 +499,13 @@ func (p *DefaultProvider) PublicURL(ctx context.Context) *url.URL {
 func (p *DefaultProvider) AdminURL(ctx context.Context) *url.URL {
 	return urlRoot(
 		p.getProvider(ctx).RequestURIF(
-			KeyAdminURL, p.fallbackURL(ctx, "/", p.host(AdminInterface), p.port(AdminInterface)),
+			KeyAdminURL, p.fallbackURL(ctx, "/", p.ServeAdmin(ctx)),
 		),
 	)
 }
 
 func (p *DefaultProvider) IssuerURL(ctx context.Context) *url.URL {
-	return p.getProvider(ctx).RequestURIF(
-		KeyIssuerURL, p.fallbackURL(ctx, "/", p.host(PublicInterface), p.port(PublicInterface)),
-	)
+	return p.getProvider(ctx).RequestURIF(KeyIssuerURL, p.fallbackURL(ctx, "/", p.ServePublic(ctx)))
 }
 
 func (p *DefaultProvider) KratosAdminURL(ctx context.Context) (*url.URL, bool) {
@@ -447,6 +545,11 @@ func (p *DefaultProvider) OAuth2TokenURL(ctx context.Context) *url.URL {
 
 func (p *DefaultProvider) OAuth2AuthURL(ctx context.Context) *url.URL {
 	return p.getProvider(ctx).RequestURIF(KeyOAuth2AuthURL, urlx.AppendPaths(p.PublicURL(ctx), "/oauth2/auth"))
+}
+
+// OAuth2DeviceAuthorisationURL returns device authorization endpoint. Defaults to "/oauth2/device/auth".
+func (p *DefaultProvider) OAuth2DeviceAuthorisationURL(ctx context.Context) *url.URL {
+	return p.getProvider(ctx).RequestURIF(KeyOAuth2DeviceAuthorisationURL, urlx.AppendPaths(p.PublicURL(ctx), "/oauth2/device/auth"))
 }
 
 func (p *DefaultProvider) JWKSURL(ctx context.Context) *url.URL {
@@ -496,6 +599,10 @@ type (
 )
 
 func (p *DefaultProvider) getHookConfig(ctx context.Context, key string) *HookConfig {
+	if p.getProvider(ctx).String(key) == "" {
+		return nil
+	}
+
 	if hookURL := p.getProvider(ctx).RequestURIF(key, nil); hookURL != nil {
 		return &HookConfig{
 			URL: hookURL.String(),
@@ -633,6 +740,11 @@ func (p *DefaultProvider) CookieNameLoginCSRF(ctx context.Context) string {
 	return p.cookieSuffix(ctx, KeyCookieLoginCSRFName)
 }
 
+// CookieNameDeviceCSRF returns the device CSRF cookie name.
+func (p *DefaultProvider) CookieNameDeviceCSRF(ctx context.Context) string {
+	return p.cookieSuffix(ctx, KeyCookieDeviceCSRFName)
+}
+
 func (p *DefaultProvider) CookieNameConsentCSRF(ctx context.Context) string {
 	return p.cookieSuffix(ctx, KeyCookieConsentCSRFName)
 }
@@ -648,4 +760,37 @@ func (p *DefaultProvider) cookieSuffix(ctx context.Context, key string) string {
 	}
 
 	return p.getProvider(ctx).String(key) + suffix
+}
+
+type GracefulRefreshTokenRotation struct {
+	Period time.Duration
+	Count  int32
+}
+
+func (p *DefaultProvider) GracefulRefreshTokenRotation(ctx context.Context) (cfg GracefulRefreshTokenRotation) {
+	//nolint:gosec
+	cfg.Count = int32(x.Clamp(p.getProvider(ctx).IntF(KeyRefreshTokenRotationGraceReuseCount, 0), 0, math.MaxInt32))
+
+	// The maximum value is 5 minutes, unless also a reuse count is configured, in
+	// which case the maximum is 180 days
+	maxPeriod := 5 * time.Minute
+	if cfg.Count > 0 {
+		maxPeriod = 180 * 24 * time.Hour
+	}
+	cfg.Period = x.Clamp(p.getProvider(ctx).DurationF(KeyRefreshTokenRotationGracePeriod, 0), 0, maxPeriod)
+
+	return
+}
+
+func (p *DefaultProvider) GetPaginationEncryptionKeys(ctx context.Context) [][32]byte {
+	secrets := p.getProvider(ctx).Strings(KeyPaginationSecrets)
+	if len(secrets) == 0 {
+		secrets = p.getProvider(ctx).Strings(KeyGetSystemSecret)
+	}
+
+	hashed := make([][32]byte, len(secrets))
+	for i := range secrets {
+		hashed[i] = sha512.Sum512_256([]byte(secrets[i]))
+	}
+	return hashed
 }

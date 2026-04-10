@@ -100,7 +100,7 @@ func (a *OAuth2APIService) AcceptOAuth2ConsentRequestExecute(r ApiAcceptOAuth2Co
 		return localVarReturnValue, nil, reportError("consentChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{"application/json"}
 
@@ -237,7 +237,7 @@ func (a *OAuth2APIService) AcceptOAuth2LoginRequestExecute(r ApiAcceptOAuth2Logi
 		return localVarReturnValue, nil, reportError("loginChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{"application/json"}
 
@@ -360,7 +360,7 @@ func (a *OAuth2APIService) AcceptOAuth2LogoutRequestExecute(r ApiAcceptOAuth2Log
 		return localVarReturnValue, nil, reportError("logoutChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -378,6 +378,132 @@ func (a *OAuth2APIService) AcceptOAuth2LogoutRequestExecute(r ApiAcceptOAuth2Log
 	if localVarHTTPHeaderAccept != "" {
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		var v ErrorOAuth2
+		err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+		if err != nil {
+			newErr.error = err.Error()
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+		newErr.model = v
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiAcceptUserCodeRequestRequest struct {
+	ctx                         context.Context
+	ApiService                  *OAuth2APIService
+	deviceChallenge             *string
+	acceptDeviceUserCodeRequest *AcceptDeviceUserCodeRequest
+}
+
+func (r ApiAcceptUserCodeRequestRequest) DeviceChallenge(deviceChallenge string) ApiAcceptUserCodeRequestRequest {
+	r.deviceChallenge = &deviceChallenge
+	return r
+}
+
+func (r ApiAcceptUserCodeRequestRequest) AcceptDeviceUserCodeRequest(acceptDeviceUserCodeRequest AcceptDeviceUserCodeRequest) ApiAcceptUserCodeRequestRequest {
+	r.acceptDeviceUserCodeRequest = &acceptDeviceUserCodeRequest
+	return r
+}
+
+func (r ApiAcceptUserCodeRequestRequest) Execute() (*OAuth2RedirectTo, *http.Response, error) {
+	return r.ApiService.AcceptUserCodeRequestExecute(r)
+}
+
+/*
+AcceptUserCodeRequest Accepts a device grant user_code request
+
+Accepts a device grant user_code request
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return ApiAcceptUserCodeRequestRequest
+*/
+func (a *OAuth2APIService) AcceptUserCodeRequest(ctx context.Context) ApiAcceptUserCodeRequestRequest {
+	return ApiAcceptUserCodeRequestRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return OAuth2RedirectTo
+func (a *OAuth2APIService) AcceptUserCodeRequestExecute(r ApiAcceptUserCodeRequestRequest) (*OAuth2RedirectTo, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPut
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *OAuth2RedirectTo
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "OAuth2APIService.AcceptUserCodeRequest")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/admin/oauth2/auth/requests/device/accept"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.deviceChallenge == nil {
+		return localVarReturnValue, nil, reportError("deviceChallenge is required and must be specified")
+	}
+
+	parameterAddToHeaderOrQuery(localVarQueryParams, "device_challenge", r.deviceChallenge, "form", "")
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{"application/json"}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	// body params
+	localVarPostBody = r.acceptDeviceUserCodeRequest
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
@@ -713,7 +839,7 @@ func (a *OAuth2APIService) DeleteOAuth2TokenExecute(r ApiDeleteOAuth2TokenReques
 		return nil, reportError("clientId is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "client_id", r.clientId, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "client_id", r.clientId, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1051,7 +1177,7 @@ func (a *OAuth2APIService) GetOAuth2ConsentRequestExecute(r ApiGetOAuth2ConsentR
 		return localVarReturnValue, nil, reportError("consentChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1189,7 +1315,7 @@ func (a *OAuth2APIService) GetOAuth2LoginRequestExecute(r ApiGetOAuth2LoginReque
 		return localVarReturnValue, nil, reportError("loginChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1318,7 +1444,7 @@ func (a *OAuth2APIService) GetOAuth2LogoutRequestExecute(r ApiGetOAuth2LogoutReq
 		return localVarReturnValue, nil, reportError("logoutChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1588,9 +1714,9 @@ func (a *OAuth2APIService) IntrospectOAuth2TokenExecute(r ApiIntrospectOAuth2Tok
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
 	if r.scope != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "scope", r.scope, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "scope", r.scope, "", "")
 	}
-	parameterAddToHeaderOrQuery(localVarFormParams, "token", r.token, "")
+	parameterAddToHeaderOrQuery(localVarFormParams, "token", r.token, "", "")
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
@@ -1712,22 +1838,19 @@ func (a *OAuth2APIService) ListOAuth2ClientsExecute(r ApiListOAuth2ClientsReques
 	localVarFormParams := url.Values{}
 
 	if r.pageSize != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "page_size", r.pageSize, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_size", r.pageSize, "form", "")
 	} else {
 		var defaultValue int64 = 250
 		r.pageSize = &defaultValue
 	}
 	if r.pageToken != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "page_token", r.pageToken, "")
-	} else {
-		var defaultValue string = "1"
-		r.pageToken = &defaultValue
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_token", r.pageToken, "form", "")
 	}
 	if r.clientName != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "client_name", r.clientName, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "client_name", r.clientName, "form", "")
 	}
 	if r.owner != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "owner", r.owner, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "owner", r.owner, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -1871,20 +1994,17 @@ func (a *OAuth2APIService) ListOAuth2ConsentSessionsExecute(r ApiListOAuth2Conse
 	}
 
 	if r.pageSize != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "page_size", r.pageSize, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_size", r.pageSize, "form", "")
 	} else {
 		var defaultValue int64 = 250
 		r.pageSize = &defaultValue
 	}
 	if r.pageToken != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "page_token", r.pageToken, "")
-	} else {
-		var defaultValue string = "1"
-		r.pageToken = &defaultValue
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_token", r.pageToken, "form", "")
 	}
-	parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "form", "")
 	if r.loginSessionId != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "login_session_id", r.loginSessionId, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "login_session_id", r.loginSessionId, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -1949,20 +2069,22 @@ func (a *OAuth2APIService) ListOAuth2ConsentSessionsExecute(r ApiListOAuth2Conse
 }
 
 type ApiListTrustedOAuth2JwtGrantIssuersRequest struct {
-	ctx          context.Context
-	ApiService   *OAuth2APIService
-	maxItems     *int64
-	defaultItems *int64
-	issuer       *string
+	ctx        context.Context
+	ApiService *OAuth2APIService
+	pageSize   *int64
+	pageToken  *string
+	issuer     *string
 }
 
-func (r ApiListTrustedOAuth2JwtGrantIssuersRequest) MaxItems(maxItems int64) ApiListTrustedOAuth2JwtGrantIssuersRequest {
-	r.maxItems = &maxItems
+// Items per Page  This is the number of items per page to return. For details on pagination please head over to the [pagination documentation](https://www.ory.sh/docs/ecosystem/api-design#pagination).
+func (r ApiListTrustedOAuth2JwtGrantIssuersRequest) PageSize(pageSize int64) ApiListTrustedOAuth2JwtGrantIssuersRequest {
+	r.pageSize = &pageSize
 	return r
 }
 
-func (r ApiListTrustedOAuth2JwtGrantIssuersRequest) DefaultItems(defaultItems int64) ApiListTrustedOAuth2JwtGrantIssuersRequest {
-	r.defaultItems = &defaultItems
+// Next Page Token  The next page token. For details on pagination please head over to the [pagination documentation](https://www.ory.sh/docs/ecosystem/api-design#pagination).
+func (r ApiListTrustedOAuth2JwtGrantIssuersRequest) PageToken(pageToken string) ApiListTrustedOAuth2JwtGrantIssuersRequest {
+	r.pageToken = &pageToken
 	return r
 }
 
@@ -2013,14 +2135,17 @@ func (a *OAuth2APIService) ListTrustedOAuth2JwtGrantIssuersExecute(r ApiListTrus
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
-	if r.maxItems != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "MaxItems", r.maxItems, "")
+	if r.pageSize != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_size", r.pageSize, "form", "")
+	} else {
+		var defaultValue int64 = 250
+		r.pageSize = &defaultValue
 	}
-	if r.defaultItems != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "DefaultItems", r.defaultItems, "")
+	if r.pageToken != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "page_token", r.pageToken, "form", "")
 	}
 	if r.issuer != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "issuer", r.issuer, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "issuer", r.issuer, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -2196,6 +2321,117 @@ func (a *OAuth2APIService) OAuth2AuthorizeExecute(r ApiOAuth2AuthorizeRequest) (
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
+type ApiOAuth2DeviceFlowRequest struct {
+	ctx        context.Context
+	ApiService *OAuth2APIService
+}
+
+func (r ApiOAuth2DeviceFlowRequest) Execute() (*DeviceAuthorization, *http.Response, error) {
+	return r.ApiService.OAuth2DeviceFlowExecute(r)
+}
+
+/*
+OAuth2DeviceFlow The OAuth 2.0 Device Authorize Endpoint
+
+This endpoint is not documented here because you should never use your own implementation to perform OAuth2 flows.
+OAuth2 is a very popular protocol and a library for your programming language will exist.
+
+To learn more about this flow please refer to the specification: https://tools.ietf.org/html/rfc8628
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return ApiOAuth2DeviceFlowRequest
+*/
+func (a *OAuth2APIService) OAuth2DeviceFlow(ctx context.Context) ApiOAuth2DeviceFlowRequest {
+	return ApiOAuth2DeviceFlowRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return DeviceAuthorization
+func (a *OAuth2APIService) OAuth2DeviceFlowExecute(r ApiOAuth2DeviceFlowRequest) (*DeviceAuthorization, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodPost
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *DeviceAuthorization
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "OAuth2APIService.OAuth2DeviceFlow")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/oauth2/device/auth"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		var v ErrorOAuth2
+		err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+		if err != nil {
+			newErr.error = err.Error()
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+		newErr.model = v
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiOauth2TokenExchangeRequest struct {
 	ctx          context.Context
 	ApiService   *OAuth2APIService
@@ -2297,17 +2533,17 @@ func (a *OAuth2APIService) Oauth2TokenExchangeExecute(r ApiOauth2TokenExchangeRe
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
 	if r.clientId != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "client_id", r.clientId, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "client_id", r.clientId, "", "")
 	}
 	if r.code != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "code", r.code, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "code", r.code, "", "")
 	}
-	parameterAddToHeaderOrQuery(localVarFormParams, "grant_type", r.grantType, "")
+	parameterAddToHeaderOrQuery(localVarFormParams, "grant_type", r.grantType, "", "")
 	if r.redirectUri != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "redirect_uri", r.redirectUri, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "redirect_uri", r.redirectUri, "", "")
 	}
 	if r.refreshToken != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "refresh_token", r.refreshToken, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "refresh_token", r.refreshToken, "", "")
 	}
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
@@ -2494,6 +2730,114 @@ func (a *OAuth2APIService) PatchOAuth2ClientExecute(r ApiPatchOAuth2ClientReques
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
+type ApiPerformOAuth2DeviceVerificationFlowRequest struct {
+	ctx        context.Context
+	ApiService *OAuth2APIService
+}
+
+func (r ApiPerformOAuth2DeviceVerificationFlowRequest) Execute() (*ErrorOAuth2, *http.Response, error) {
+	return r.ApiService.PerformOAuth2DeviceVerificationFlowExecute(r)
+}
+
+/*
+PerformOAuth2DeviceVerificationFlow OAuth 2.0 Device Verification Endpoint
+
+This is the device user verification endpoint. The user is redirected here when trying to log in using the device flow.
+
+	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+	@return ApiPerformOAuth2DeviceVerificationFlowRequest
+*/
+func (a *OAuth2APIService) PerformOAuth2DeviceVerificationFlow(ctx context.Context) ApiPerformOAuth2DeviceVerificationFlowRequest {
+	return ApiPerformOAuth2DeviceVerificationFlowRequest{
+		ApiService: a,
+		ctx:        ctx,
+	}
+}
+
+// Execute executes the request
+//
+//	@return ErrorOAuth2
+func (a *OAuth2APIService) PerformOAuth2DeviceVerificationFlowExecute(r ApiPerformOAuth2DeviceVerificationFlowRequest) (*ErrorOAuth2, *http.Response, error) {
+	var (
+		localVarHTTPMethod  = http.MethodGet
+		localVarPostBody    interface{}
+		formFiles           []formFile
+		localVarReturnValue *ErrorOAuth2
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "OAuth2APIService.PerformOAuth2DeviceVerificationFlow")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/oauth2/device/verify"
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		var v ErrorOAuth2
+		err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+		if err != nil {
+			newErr.error = err.Error()
+			return localVarReturnValue, localVarHTTPResponse, newErr
+		}
+		newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+		newErr.model = v
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiRejectOAuth2ConsentRequestRequest struct {
 	ctx                 context.Context
 	ApiService          *OAuth2APIService
@@ -2570,7 +2914,7 @@ func (a *OAuth2APIService) RejectOAuth2ConsentRequestExecute(r ApiRejectOAuth2Co
 		return localVarReturnValue, nil, reportError("consentChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "consent_challenge", r.consentChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{"application/json"}
 
@@ -2706,7 +3050,7 @@ func (a *OAuth2APIService) RejectOAuth2LoginRequestExecute(r ApiRejectOAuth2Logi
 		return localVarReturnValue, nil, reportError("loginChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "login_challenge", r.loginChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{"application/json"}
 
@@ -2826,7 +3170,7 @@ func (a *OAuth2APIService) RejectOAuth2LogoutRequestExecute(r ApiRejectOAuth2Log
 		return nil, reportError("logoutChallenge is required and must be specified")
 	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "logout_challenge", r.logoutChallenge, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -2881,11 +3225,12 @@ func (a *OAuth2APIService) RejectOAuth2LogoutRequestExecute(r ApiRejectOAuth2Log
 }
 
 type ApiRevokeOAuth2ConsentSessionsRequest struct {
-	ctx        context.Context
-	ApiService *OAuth2APIService
-	subject    *string
-	client     *string
-	all        *bool
+	ctx              context.Context
+	ApiService       *OAuth2APIService
+	subject          *string
+	client           *string
+	consentRequestId *string
+	all              *bool
 }
 
 // OAuth 2.0 Consent Subject  The subject whose consent sessions should be deleted.
@@ -2897,6 +3242,12 @@ func (r ApiRevokeOAuth2ConsentSessionsRequest) Subject(subject string) ApiRevoke
 // OAuth 2.0 Client ID  If set, deletes only those consent sessions that have been granted to the specified OAuth 2.0 Client ID.
 func (r ApiRevokeOAuth2ConsentSessionsRequest) Client(client string) ApiRevokeOAuth2ConsentSessionsRequest {
 	r.client = &client
+	return r
+}
+
+// Consent Request ID  If set, revoke all token chains derived from this particular consent request ID.
+func (r ApiRevokeOAuth2ConsentSessionsRequest) ConsentRequestId(consentRequestId string) ApiRevokeOAuth2ConsentSessionsRequest {
+	r.consentRequestId = &consentRequestId
 	return r
 }
 
@@ -2944,16 +3295,18 @@ func (a *OAuth2APIService) RevokeOAuth2ConsentSessionsExecute(r ApiRevokeOAuth2C
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
-	if r.subject == nil {
-		return nil, reportError("subject is required and must be specified")
-	}
 
-	parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "")
+	if r.subject != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "form", "")
+	}
 	if r.client != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "client", r.client, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "client", r.client, "form", "")
+	}
+	if r.consentRequestId != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "consent_request_id", r.consentRequestId, "form", "")
 	}
 	if r.all != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "all", r.all, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "all", r.all, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -3021,7 +3374,7 @@ func (r ApiRevokeOAuth2LoginSessionsRequest) Subject(subject string) ApiRevokeOA
 	return r
 }
 
-// OAuth 2.0 Subject  The subject to revoke authentication sessions for.
+// Login Session ID  The login session to revoke.
 func (r ApiRevokeOAuth2LoginSessionsRequest) Sid(sid string) ApiRevokeOAuth2LoginSessionsRequest {
 	r.sid = &sid
 	return r
@@ -3042,6 +3395,8 @@ No OpenID Connect Front- or Back-channel logout is performed in this case.
 
 Alternatively, you can send a SessionID via `sid` query param, in which case, only the session that is connected
 to that SessionID is revoked. OpenID Connect Back-channel logout is performed in this case.
+
+When using Ory for the identity provider, the login provider will also invalidate the session cookie.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@return ApiRevokeOAuth2LoginSessionsRequest
@@ -3073,10 +3428,10 @@ func (a *OAuth2APIService) RevokeOAuth2LoginSessionsExecute(r ApiRevokeOAuth2Log
 	localVarFormParams := url.Values{}
 
 	if r.subject != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "subject", r.subject, "form", "")
 	}
 	if r.sid != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "sid", r.sid, "")
+		parameterAddToHeaderOrQuery(localVarQueryParams, "sid", r.sid, "form", "")
 	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
@@ -3216,12 +3571,12 @@ func (a *OAuth2APIService) RevokeOAuth2TokenExecute(r ApiRevokeOAuth2TokenReques
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
 	if r.clientId != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "client_id", r.clientId, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "client_id", r.clientId, "", "")
 	}
 	if r.clientSecret != nil {
-		parameterAddToHeaderOrQuery(localVarFormParams, "client_secret", r.clientSecret, "")
+		parameterAddToHeaderOrQuery(localVarFormParams, "client_secret", r.clientSecret, "", "")
 	}
-	parameterAddToHeaderOrQuery(localVarFormParams, "token", r.token, "")
+	parameterAddToHeaderOrQuery(localVarFormParams, "token", r.token, "", "")
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return nil, err

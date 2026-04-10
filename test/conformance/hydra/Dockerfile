@@ -1,4 +1,4 @@
-FROM golang:1.22 AS builder
+FROM golang:1.26 AS builder
 
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
@@ -7,6 +7,10 @@ RUN apt-get update && \
 
 WORKDIR /go/src/github.com/ory/hydra
 RUN mkdir -p ./internal/httpclient
+
+COPY oryx/go.mod oryx/go.mod
+COPY oryx/go.sum oryx/go.sum
+                
 
 COPY go.mod go.sum ./
 COPY internal/httpclient/go.* ./internal/httpclient/
@@ -18,9 +22,9 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -tags sqlite,json1 -o /usr/bin/hydra
+RUN go build -tags sqlite -o /usr/bin/hydra
 
-VOLUME /var/lib/sqlite
+VOLUME /mnt/sqlite
 
 # Exposing the ory home directory
 VOLUME /home/ory

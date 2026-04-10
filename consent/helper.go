@@ -4,9 +4,11 @@
 package consent
 
 import (
-	"github.com/ory/fosite"
+	"net/url"
+	"strings"
+
 	"github.com/ory/hydra/v2/client"
-	"github.com/ory/hydra/v2/flow"
+	"github.com/ory/hydra/v2/fosite"
 )
 
 func sanitizeClientFromRequest(ar fosite.AuthorizeRequester) *client.Client {
@@ -21,20 +23,26 @@ func sanitizeClient(c *client.Client) *client.Client {
 	return cc
 }
 
-func matchScopes(scopeStrategy fosite.ScopeStrategy, previousConsent []flow.AcceptOAuth2ConsentRequest, requestedScope []string) *flow.AcceptOAuth2ConsentRequest {
-	for _, cs := range previousConsent {
-		var found = true
-		for _, scope := range requestedScope {
-			if !scopeStrategy(cs.GrantedScope, scope) {
-				found = false
-				break
-			}
-		}
-
-		if found {
-			return &cs
+func matchScopes(scopeStrategy fosite.ScopeStrategy, grantedScope, requestedScope []string) bool {
+	for _, scope := range requestedScope {
+		if !scopeStrategy(grantedScope, scope) {
+			return false
 		}
 	}
+	return true
+}
 
-	return nil
+func caseInsensitiveFilterParam(q url.Values, key string) url.Values {
+	query := url.Values{}
+	key = strings.ToLower(key)
+	for k, vs := range q {
+		if key == strings.ToLower(k) {
+			query.Set(k, "****")
+		} else {
+			for _, v := range vs {
+				query.Add(k, v)
+			}
+		}
+	}
+	return query
 }

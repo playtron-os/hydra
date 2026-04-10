@@ -11,31 +11,29 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
-	"github.com/ory/x/sqlxx"
+	"github.com/urfave/negroni"
 
 	"github.com/ory/x/httprouterx"
+	"github.com/ory/x/sqlxx"
+	"github.com/ory/x/urlx"
 
 	"github.com/tidwall/sjson"
 
 	"github.com/gofrs/uuid"
 	"github.com/tidwall/gjson"
 
+	"github.com/ory/hydra/v2/driver/config"
 	"github.com/ory/hydra/v2/internal/testhelpers"
 
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/x/contextx"
-
-	"github.com/julienschmidt/httprouter"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/ory/x/snapshotx"
-
 	"github.com/stretchr/testify/require"
 
 	"github.com/ory/hydra/v2/client"
-	"github.com/ory/hydra/v2/internal"
+	"github.com/ory/x/snapshotx"
 )
 
 type responseSnapshot struct {
@@ -56,9 +54,8 @@ func getClientID(body string) string {
 
 func TestHandler(t *testing.T) {
 	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
+	reg := testhelpers.NewRegistryMemory(t)
 	h := client.NewHandler(reg)
-	reg.WithContextualizer(&contextx.TestContextualizer{})
 
 	t.Run("create client registration tokens", func(t *testing.T) {
 		for k, tc := range []struct {
@@ -96,7 +93,7 @@ func TestHandler(t *testing.T) {
 					except = append(except, "client_id", "client_secret", "registration_client_uri")
 				}
 
-				snapshotx.SnapshotTExcept(t, c, except)
+				snapshotx.SnapshotT(t, c, snapshotx.ExceptPaths(except...))
 			})
 		}
 	})
@@ -110,42 +107,59 @@ func TestHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Run("valid auth", func(t *testing.T) {
-			actual, err := h.ValidDynamicAuth(&http.Request{Header: http.Header{"Authorization": {"Bearer " + expected.RegistrationAccessToken}}}, httprouter.Params{
-				{Key: "id", Value: expected.GetID()},
-			})
+			actual, err := h.ValidDynamicAuth(&http.Request{Header: http.Header{"Authorization": {"Bearer " + expected.RegistrationAccessToken}}}, expected.ID)
 			require.NoError(t, err, "authentication with registration access token works")
 			assert.EqualValues(t, expected.GetID(), actual.GetID())
 		})
 
 		t.Run("missing auth", func(t *testing.T) {
-			_, err := h.ValidDynamicAuth(&http.Request{}, httprouter.Params{
-				{Key: "id", Value: expected.GetID()},
-			})
+			_, err = h.ValidDynamicAuth(&http.Request{}, expected.ID)
 			require.Error(t, err, "authentication without registration access token fails")
 		})
 
 		t.Run("incorrect auth", func(t *testing.T) {
-			_, err := h.ValidDynamicAuth(&http.Request{Header: http.Header{"Authorization": {"Bearer invalid"}}}, httprouter.Params{
-				{Key: "id", Value: expected.GetID()},
-			})
+			_, err = h.ValidDynamicAuth(&http.Request{Header: http.Header{"Authorization": {"Bearer invalid"}}}, expected.ID)
 			require.Error(t, err, "authentication with invalid registration access token fails")
 		})
 	})
 
-	newServer := func(t *testing.T, dynamicEnabled bool) (*httptest.Server, *http.Client) {
+	newServer := func(t *testing.T, dynamicEnabled bool) (adminTs *httptest.Server, publicTs *httptest.Server) {
 		require.NoError(t, reg.Config().Set(ctx, config.KeyPublicAllowDynamicRegistration, dynamicEnabled))
-		router := httprouter.New()
-		h.SetRoutes(httprouterx.NewRouterAdminWithPrefixAndRouter(router, "/admin", reg.Config().AdminURL), &httprouterx.RouterPublic{Router: router})
-		ts := httptest.NewServer(router)
-		t.Cleanup(ts.Close)
-		reg.Config().MustSet(ctx, config.KeyAdminURL, ts.URL)
-		return ts, ts.Client()
+
+		{
+			n := negroni.New()
+			n.UseFunc(httprouterx.TrimTrailingSlashNegroni)
+			n.UseFunc(httprouterx.NoCacheNegroni)
+			n.UseFunc(httprouterx.AddAdminPrefixIfNotPresentNegroni)
+
+			router := httprouterx.NewTestRouterAdminWithPrefix(t)
+			h.SetAdminRoutes(router)
+			n.UseHandler(router)
+
+			adminTs = httptest.NewServer(n)
+			t.Cleanup(adminTs.Close)
+			reg.Config().MustSet(ctx, config.KeyAdminURL, adminTs.URL)
+		}
+		{
+			n := negroni.New()
+			n.UseFunc(httprouterx.TrimTrailingSlashNegroni)
+			n.UseFunc(httprouterx.NoCacheNegroni)
+
+			router := httprouterx.NewTestRouterPublic(t)
+			h.SetPublicRoutes(router)
+			n.UseHandler(router)
+
+			publicTs = httptest.NewServer(n)
+			t.Cleanup(publicTs.Close)
+			reg.Config().MustSet(ctx, config.KeyAdminURL, publicTs.URL)
+		}
+		return
 	}
 
 	fetch := func(t *testing.T, url string) (string, *http.Response) {
 		res, err := http.Get(url)
 		require.NoError(t, err)
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 		body, err := io.ReadAll(res.Body)
 		require.NoError(t, err)
 		return string(body), res
@@ -155,9 +169,10 @@ func TestHandler(t *testing.T) {
 		r, err := http.NewRequest(method, url, body)
 		require.NoError(t, err)
 		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Accept", "application/json")
 		res, err := http.DefaultClient.Do(r)
 		require.NoError(t, err)
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 		out, err := io.ReadAll(res.Body)
 		require.NoError(t, err)
 		return string(out), res
@@ -171,7 +186,7 @@ func TestHandler(t *testing.T) {
 		r.Header.Set("Content-Type", "application/json")
 		res, err := ts.Client().Do(r)
 		require.NoError(t, err)
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 		rb, err := io.ReadAll(res.Body)
 		require.NoError(t, err)
 		return string(rb), res
@@ -184,26 +199,26 @@ func TestHandler(t *testing.T) {
 	}
 
 	t.Run("selfservice disabled", func(t *testing.T) {
-		ts, hc := newServer(t, false)
+		adminTs, publicTs := newServer(t, false)
 
 		trap := &client.Client{}
-		actual := createClient(t, trap, ts, client.ClientsHandlerPath)
+		actual := createClient(t, trap, adminTs, client.ClientsHandlerPath)
 		actualID := getClientID(actual)
 
 		for _, tc := range []struct {
 			method string
 			path   string
 		}{
-			{method: "GET", path: ts.URL + client.DynClientsHandlerPath + "/" + actualID},
-			{method: "POST", path: ts.URL + client.DynClientsHandlerPath},
-			{method: "PUT", path: ts.URL + client.DynClientsHandlerPath + "/" + actualID},
-			{method: "DELETE", path: ts.URL + client.DynClientsHandlerPath + "/" + actualID},
+			{method: "GET", path: urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(actualID))},
+			{method: "POST", path: urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath)},
+			{method: "PUT", path: urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(actualID))},
+			{method: "DELETE", path: urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(actualID))},
 		} {
 			t.Run("method="+tc.method, func(t *testing.T) {
 				req, err := http.NewRequest(tc.method, tc.path, nil)
 				require.NoError(t, err)
 
-				res, err := hc.Do(req)
+				res, err := publicTs.Client().Do(req)
 				require.NoError(t, err)
 				require.Equal(t, http.StatusNotFound, res.StatusCode)
 			})
@@ -211,48 +226,48 @@ func TestHandler(t *testing.T) {
 	})
 
 	t.Run("case=selfservice with incorrect or missing auth", func(t *testing.T) {
-		ts, hc := newServer(t, true)
+		adminTs, publicTs := newServer(t, true)
 		expectedFirst := createClient(t, &client.Client{
 			Secret:                  "averylongsecret",
 			RedirectURIs:            []string{"http://localhost:3000/cb"},
 			TokenEndpointAuthMethod: "client_secret_basic",
-		}, ts, client.ClientsHandlerPath)
+		}, adminTs, client.ClientsHandlerPath)
 		expectedFirstID := getClientID(expectedFirst)
 
 		// Create the second client
 		expectedSecond := createClient(t, &client.Client{
 			Secret:       "averylongsecret",
 			RedirectURIs: []string{"http://localhost:3000/cb"},
-		}, ts, client.ClientsHandlerPath)
+		}, adminTs, client.ClientsHandlerPath)
 		expectedSecondID := getClientID(expectedSecond)
 
 		t.Run("endpoint=selfservice", func(t *testing.T) {
 			for _, method := range []string{"GET", "DELETE", "PUT"} {
 				t.Run("method="+method, func(t *testing.T) {
 					t.Run("without auth", func(t *testing.T) {
-						req, err := http.NewRequest(method, ts.URL+client.DynClientsHandlerPath+"/"+expectedFirstID, nil)
+						req, err := http.NewRequest(method, urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedFirstID)), nil)
 						require.NoError(t, err)
 
-						res, err := hc.Do(req)
+						res, err := publicTs.Client().Do(req)
 						require.NoError(t, err)
-						defer res.Body.Close()
+						defer res.Body.Close() //nolint:errcheck
 
 						body, err := io.ReadAll(res.Body)
 						require.NoError(t, err)
 
-						snapshotx.SnapshotTExcept(t, newResponseSnapshot(string(body), res), nil)
+						snapshotx.SnapshotT(t, newResponseSnapshot(string(body), res))
 					})
 
 					t.Run("without incorrect auth", func(t *testing.T) {
-						body, res := fetchWithBearerAuth(t, method, ts.URL+client.DynClientsHandlerPath+"/"+expectedFirstID, "incorrect", nil)
+						body, res := fetchWithBearerAuth(t, method, urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedFirstID)), "incorrect", nil)
 						assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
-						snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+						snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 					})
 
 					t.Run("with a different client auth", func(t *testing.T) {
-						body, res := fetchWithBearerAuth(t, method, ts.URL+client.DynClientsHandlerPath+"/"+expectedFirstID, expectedSecondID, nil)
+						body, res := fetchWithBearerAuth(t, method, urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedFirstID)), expectedSecondID, nil)
 						assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
-						snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+						snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 					})
 				})
 			}
@@ -260,12 +275,12 @@ func TestHandler(t *testing.T) {
 	})
 
 	t.Run("common", func(t *testing.T) {
-		ts, _ := newServer(t, true)
+		adminTs, publicTs := newServer(t, true)
 		expected := createClient(t, &client.Client{
 			Secret:                  "averylongsecret",
 			RedirectURIs:            []string{"http://localhost:3000/cb"},
 			TokenEndpointAuthMethod: "client_secret_basic",
-		}, ts, client.ClientsHandlerPath)
+		}, adminTs, client.ClientsHandlerPath)
 
 		t.Run("case=create clients", func(t *testing.T) {
 			for k, tc := range []struct {
@@ -398,6 +413,12 @@ func TestHandler(t *testing.T) {
 				},
 			} {
 				t.Run(fmt.Sprintf("case=%d/description=%s", k, tc.d), func(t *testing.T) {
+					var ts *httptest.Server
+					if strings.HasPrefix(tc.path, client.DynClientsHandlerPath) {
+						ts = publicTs
+					} else {
+						ts = adminTs
+					}
 					body, res := makeJSON(t, ts, "POST", tc.path, tc.payload)
 					require.Equal(t, tc.statusCode, res.StatusCode, body)
 					exclude := []string{"updated_at", "created_at", "registration_access_token"}
@@ -420,66 +441,84 @@ func TestHandler(t *testing.T) {
 
 		t.Run("case=fetching non-existing client", func(t *testing.T) {
 			for _, path := range []string{
-				client.DynClientsHandlerPath + "/foo",
-				client.ClientsHandlerPath + "/foo",
+				urlx.MustJoin(client.DynClientsHandlerPath, "foo"),
+				urlx.MustJoin(client.ClientsHandlerPath, "foo"),
 			} {
 				t.Run("path="+path, func(t *testing.T) {
+					var ts *httptest.Server
+					if strings.HasPrefix(path, client.DynClientsHandlerPath) {
+						ts = publicTs
+					} else {
+						ts = adminTs
+					}
 					body, res := fetchWithBearerAuth(t, "GET", ts.URL+path, gjson.Get(expected, "registration_access_token").String(), nil)
-					snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+					snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 				})
 			}
 		})
 
 		t.Run("case=updating non-existing client", func(t *testing.T) {
 			for _, path := range []string{
-				client.DynClientsHandlerPath + "/foo",
-				client.ClientsHandlerPath + "/foo",
+				urlx.MustJoin(client.DynClientsHandlerPath, "foo"),
+				urlx.MustJoin(client.ClientsHandlerPath, "foo"),
 			} {
 				t.Run("path="+path, func(t *testing.T) {
+					var ts *httptest.Server
+					if strings.HasPrefix(path, client.DynClientsHandlerPath) {
+						ts = publicTs
+					} else {
+						ts = adminTs
+					}
 					body, res := fetchWithBearerAuth(t, "PUT", ts.URL+path, "invalid", bytes.NewBufferString("{}"))
-					snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+					snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 				})
 			}
 		})
 
 		t.Run("case=delete non-existing client", func(t *testing.T) {
 			for _, path := range []string{
-				client.DynClientsHandlerPath + "/foo",
-				client.ClientsHandlerPath + "/foo",
+				urlx.MustJoin(client.DynClientsHandlerPath, "foo"),
+				urlx.MustJoin(client.ClientsHandlerPath, "foo"),
 			} {
+				var ts *httptest.Server
+				if strings.HasPrefix(path, client.DynClientsHandlerPath) {
+					ts = publicTs
+				} else {
+					ts = adminTs
+				}
 				t.Run("path="+path, func(t *testing.T) {
 					body, res := fetchWithBearerAuth(t, "DELETE", ts.URL+path, "invalid", nil)
-					snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+					snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 				})
 			}
 		})
 
 		t.Run("case=patching non-existing client", func(t *testing.T) {
-			body, res := fetchWithBearerAuth(t, "PATCH", ts.URL+client.ClientsHandlerPath+"/foo", "", nil)
-			snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+			body, res := fetchWithBearerAuth(t, "PATCH", urlx.MustJoin(adminTs.URL, client.ClientsHandlerPath, "foo"), "", nil)
+			snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 		})
 
 		t.Run("case=fetching existing client", func(t *testing.T) {
 			expected := createClient(t, &client.Client{
 				Secret:       "rdetzfuzgihojuzgtfrdes",
 				RedirectURIs: []string{"http://localhost:3000/cb"},
-			}, ts, client.ClientsHandlerPath)
+			}, adminTs, client.ClientsHandlerPath)
 			id := gjson.Get(expected, "client_id").String()
 			rat := gjson.Get(expected, "registration_access_token").String()
 
 			t.Run("endpoint=admin", func(t *testing.T) {
-				body, res := fetch(t, ts.URL+client.ClientsHandlerPath+"/"+id)
+				body, res := fetch(t, urlx.MustJoin(adminTs.URL, client.ClientsHandlerPath, url.PathEscape(id)))
 				assert.Equal(t, http.StatusOK, res.StatusCode)
 				assert.Equal(t, id, gjson.Get(body, "client_id").String())
-				snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), []string{"body.client_id", "body.created_at", "body.updated_at"})
+				snapshotx.SnapshotT(t, newResponseSnapshot(body, res), snapshotx.ExceptPaths("body.client_id", "body.created_at", "body.updated_at"))
 			})
 
 			t.Run("endpoint=selfservice", func(t *testing.T) {
-				body, res := fetchWithBearerAuth(t, "GET", ts.URL+client.DynClientsHandlerPath+"/"+id, rat, nil)
+				body, res := fetchWithBearerAuth(t, "GET", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(id)), rat, nil)
 				assert.Equal(t, http.StatusOK, res.StatusCode)
 				assert.Equal(t, id, gjson.Get(body, "client_id").String())
 				assert.False(t, gjson.Get(body, "metadata").Bool())
-				snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), []string{"body.client_id", "body.created_at", "body.updated_at"})
+				snapshotx.SnapshotT(t, newResponseSnapshot(body, res), snapshotx.ExceptPaths("body.client_id", "body.created_at", "body.updated_at"))
 			})
 		})
 
@@ -488,7 +527,7 @@ func TestHandler(t *testing.T) {
 				Secret:                  "averylongsecret",
 				RedirectURIs:            []string{"http://localhost:3000/cb"},
 				TokenEndpointAuthMethod: "client_secret_basic",
-			}, ts, client.ClientsHandlerPath)
+			}, adminTs, client.ClientsHandlerPath)
 			id := gjson.Get(expected, "client_id").String()
 
 			// Possible to update the secret
@@ -498,9 +537,9 @@ func TestHandler(t *testing.T) {
 			payload, err = sjson.Set(payload, "client_secret", "")
 			require.NoError(t, err)
 
-			body, res := fetchWithBearerAuth(t, "PUT", ts.URL+client.DynClientsHandlerPath+"/"+id, gjson.Get(expected, "registration_access_token").String(), bytes.NewBufferString(payload))
+			body, res := fetchWithBearerAuth(t, "PUT", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(id)), gjson.Get(expected, "registration_access_token").String(), bytes.NewBufferString(payload))
 			assert.Equal(t, http.StatusBadRequest, res.StatusCode, "%s\n%s", body, payload)
-			snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+			snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 		})
 
 		t.Run("case=updating existing client", func(t *testing.T) {
@@ -509,13 +548,13 @@ func TestHandler(t *testing.T) {
 					Secret:                  "averylongsecret",
 					RedirectURIs:            []string{"http://localhost:3000/cb"},
 					TokenEndpointAuthMethod: "client_secret_basic",
-				}, ts, client.ClientsHandlerPath)
+				}, adminTs, client.ClientsHandlerPath)
 				expectedID := getClientID(expected)
 
 				payload, _ := sjson.Set(expected, "redirect_uris", []string{"http://localhost:3000/cb", "https://foobar.com"})
-				body, res := makeJSON(t, ts, "PUT", client.ClientsHandlerPath+"/"+expectedID, json.RawMessage(payload))
+				body, res := makeJSON(t, adminTs, "PUT", urlx.MustJoin(client.ClientsHandlerPath, url.PathEscape(expectedID)), json.RawMessage(payload))
 				assert.Equal(t, http.StatusOK, res.StatusCode)
-				snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), []string{"body.created_at", "body.updated_at", "body.client_id", "body.registration_client_uri", "body.registration_access_token"})
+				snapshotx.SnapshotT(t, newResponseSnapshot(body, res), snapshotx.ExceptPaths("body.created_at", "body.updated_at", "body.client_id", "body.registration_client_uri", "body.registration_access_token"))
 			})
 
 			t.Run("endpoint=dynamic client registration", func(t *testing.T) {
@@ -523,7 +562,7 @@ func TestHandler(t *testing.T) {
 					Secret:                  "averylongsecret",
 					RedirectURIs:            []string{"http://localhost:3000/cb"},
 					TokenEndpointAuthMethod: "client_secret_basic",
-				}, ts, client.ClientsHandlerPath)
+				}, adminTs, client.ClientsHandlerPath)
 				expectedID := getClientID(expected)
 
 				// Possible to update the secret
@@ -532,16 +571,16 @@ func TestHandler(t *testing.T) {
 				payload, _ = sjson.Delete(payload, "metadata")
 
 				originalRAT := gjson.Get(expected, "registration_access_token").String()
-				body, res := fetchWithBearerAuth(t, "PUT", ts.URL+client.DynClientsHandlerPath+"/"+expectedID, originalRAT, bytes.NewBufferString(payload))
+				body, res := fetchWithBearerAuth(t, "PUT", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedID)), originalRAT, bytes.NewBufferString(payload))
 				assert.Equal(t, http.StatusOK, res.StatusCode, "%s\n%s", body, payload)
 				newToken := gjson.Get(body, "registration_access_token").String()
 				assert.NotEmpty(t, newToken)
 				require.NotEqual(t, originalRAT, newToken, "the new token should be different from the old token")
-				snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), []string{"body.created_at", "body.updated_at", "body.registration_access_token", "body.client_id", "body.registration_client_uri"})
+				snapshotx.SnapshotT(t, newResponseSnapshot(body, res), snapshotx.ExceptPaths("body.created_at", "body.updated_at", "body.registration_access_token", "body.client_id", "body.registration_client_uri"))
 
-				_, res = fetchWithBearerAuth(t, "GET", ts.URL+client.DynClientsHandlerPath+"/"+expectedID, originalRAT, bytes.NewBufferString(payload))
+				_, res = fetchWithBearerAuth(t, "GET", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedID)), originalRAT, bytes.NewBufferString(payload))
 				assert.Equal(t, http.StatusUnauthorized, res.StatusCode)
-				body, res = fetchWithBearerAuth(t, "GET", ts.URL+client.DynClientsHandlerPath+"/"+expectedID, newToken, bytes.NewBufferString(payload))
+				body, res = fetchWithBearerAuth(t, "GET", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedID)), newToken, bytes.NewBufferString(payload))
 				assert.Equal(t, http.StatusOK, res.StatusCode)
 				assert.Empty(t, gjson.Get(body, "registration_access_token").String())
 			})
@@ -550,7 +589,7 @@ func TestHandler(t *testing.T) {
 				expected := createClient(t, &client.Client{
 					RedirectURIs:            []string{"http://localhost:3000/cb"},
 					TokenEndpointAuthMethod: "client_secret_basic",
-				}, ts, client.ClientsHandlerPath)
+				}, adminTs, client.ClientsHandlerPath)
 				expectedID := getClientID(expected)
 
 				// Possible to update the secret
@@ -558,19 +597,19 @@ func TestHandler(t *testing.T) {
 				payload, _ = sjson.Set(payload, "secret", "")
 
 				originalRAT := gjson.Get(expected, "registration_access_token").String()
-				body, res := fetchWithBearerAuth(t, "PUT", ts.URL+client.DynClientsHandlerPath+"/"+expectedID, originalRAT, bytes.NewBufferString(payload))
+				body, res := fetchWithBearerAuth(t, "PUT", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedID)), originalRAT, bytes.NewBufferString(payload))
 				assert.Equal(t, http.StatusForbidden, res.StatusCode)
-				snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+				snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 			})
 		})
 
 		t.Run("case=creating a client dynamically does not allow setting the secret", func(t *testing.T) {
-			body, res := makeJSON(t, ts, "POST", client.DynClientsHandlerPath, &client.Client{
+			body, res := makeJSON(t, publicTs, "POST", client.DynClientsHandlerPath, &client.Client{
 				TokenEndpointAuthMethod: "client_secret_basic",
 				Secret:                  "foobarbaz",
 			})
 			require.Equal(t, http.StatusBadRequest, res.StatusCode, body)
-			snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), nil)
+			snapshotx.SnapshotT(t, newResponseSnapshot(body, res))
 		})
 
 		t.Run("case=update the lifespans of an OAuth2 client", func(t *testing.T) {
@@ -580,12 +619,12 @@ func TestHandler(t *testing.T) {
 				RedirectURIs:            []string{"http://localhost:3000/cb"},
 				TokenEndpointAuthMethod: "client_secret_basic",
 			}
-			body, res := makeJSON(t, ts, "POST", client.ClientsHandlerPath, expected)
+			body, res := makeJSON(t, adminTs, "POST", client.ClientsHandlerPath, expected)
 			require.Equal(t, http.StatusCreated, res.StatusCode, body)
 
-			body, res = makeJSON(t, ts, "PUT", client.ClientsHandlerPath+"/"+gjson.Get(body, "client_id").String()+"/lifespans", testhelpers.TestLifespans)
+			body, res = makeJSON(t, adminTs, "PUT", urlx.MustJoin(client.ClientsHandlerPath, url.PathEscape(gjson.Get(body, "client_id").String()), "lifespans"), testhelpers.TestLifespans)
 			require.Equal(t, http.StatusOK, res.StatusCode, body)
-			snapshotx.SnapshotTExcept(t, newResponseSnapshot(body, res), []string{"body.client_id", "body.created_at", "body.updated_at"})
+			snapshotx.SnapshotT(t, newResponseSnapshot(body, res), snapshotx.ExceptPaths("body.client_id", "body.created_at", "body.updated_at"))
 		})
 
 		t.Run("case=delete existing client", func(t *testing.T) {
@@ -593,10 +632,10 @@ func TestHandler(t *testing.T) {
 				expected := createClient(t, &client.Client{
 					RedirectURIs:            []string{"http://localhost:3000/cb"},
 					TokenEndpointAuthMethod: "client_secret_basic",
-				}, ts, client.ClientsHandlerPath)
+				}, adminTs, client.ClientsHandlerPath)
 				expectedID := getClientID(expected)
 
-				_, res := makeJSON(t, ts, "DELETE", client.ClientsHandlerPath+"/"+expectedID, nil)
+				_, res := makeJSON(t, adminTs, "DELETE", urlx.MustJoin(client.ClientsHandlerPath, url.PathEscape(expectedID)), nil)
 				assert.Equal(t, http.StatusNoContent, res.StatusCode)
 			})
 
@@ -605,12 +644,13 @@ func TestHandler(t *testing.T) {
 					Secret:                  "averylongsecret",
 					RedirectURIs:            []string{"http://localhost:3000/cb"},
 					TokenEndpointAuthMethod: "client_secret_basic",
-				}, ts, client.ClientsHandlerPath)
+				}, adminTs, client.ClientsHandlerPath)
 				expectedID := getClientID(expected)
 
 				originalRAT := gjson.Get(expected, "registration_access_token").String()
-				_, res := fetchWithBearerAuth(t, "DELETE", ts.URL+client.DynClientsHandlerPath+"/"+expectedID, originalRAT, nil)
+				_, res := fetchWithBearerAuth(t, "DELETE", urlx.MustJoin(publicTs.URL, client.DynClientsHandlerPath, url.PathEscape(expectedID)), originalRAT, nil)
 				assert.Equal(t, http.StatusNoContent, res.StatusCode)
+
 			})
 		})
 	})

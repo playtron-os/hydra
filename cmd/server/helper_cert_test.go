@@ -5,7 +5,6 @@ package server_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -14,12 +13,13 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v3"
-	"github.com/google/uuid"
+	"github.com/gofrs/uuid"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ory/x/configx"
 	"github.com/ory/x/logrusx"
+	"github.com/ory/x/servicelocatorx"
 	"github.com/ory/x/tlsx"
 
 	"github.com/ory/hydra/v2/cmd/server"
@@ -33,20 +33,17 @@ func TestGetOrCreateTLSCertificate(t *testing.T) {
 	certPath, keyPath, cert, priv := testhelpers.GenerateTLSCertificateFilesForTests(t)
 	logger := logrusx.New("", "")
 	logger.Logger.ExitFunc = func(code int) { t.Fatalf("Logger called os.Exit(%v)", code) }
-	hook := test.NewLocal(logger.Logger)
-	cfg := config.MustNew(
-		context.Background(),
-		logger,
-		configx.WithValues(map[string]interface{}{
+	d, err := driver.New(t.Context(),
+		driver.WithConfigOptions(configx.WithValues(map[string]interface{}{
 			"dsn":                 config.DSNMemory,
 			"serve.tls.enabled":   true,
 			"serve.tls.cert.path": certPath,
 			"serve.tls.key.path":  keyPath,
-		}),
+		})),
+		driver.WithServiceLocatorOptions(servicelocatorx.WithLogger(logger)),
 	)
-	d, err := driver.NewRegistryWithoutInit(cfg, logger)
 	require.NoError(t, err)
-	getCert := server.GetOrCreateTLSCertificate(context.Background(), d, config.AdminInterface, nil)
+	getCert := server.GetOrCreateTLSCertificate(t.Context(), d, d.Config().ServeAdmin(t.Context()).TLS, "admin")
 	require.NotNil(t, getCert)
 	tlsCert, err := getCert(nil)
 	require.NoError(t, err)
@@ -64,6 +61,8 @@ func TestGetOrCreateTLSCertificate(t *testing.T) {
 	require.False(t, priv.Equal(newPriv))
 	require.NotEqual(t, certPath, newCertPath)
 	require.NotEqual(t, keyPath, newKeyPath)
+
+	hook := test.NewLocal(logger.Logger)
 
 	// move them into place
 	require.NoError(t, os.Rename(newKeyPath, keyPath))
@@ -96,7 +95,7 @@ func TestGetOrCreateTLSCertificate(t *testing.T) {
 		default:
 		}
 	}
-	require.Contains(t, hook.LastEntry().Message, "Failed to reload TLS certificates. Using the previously loaded certificates.")
+	require.Contains(t, hook.LastEntry().Message, "Failed to reload TLS certificates, using previous certificates")
 }
 
 func TestGetOrCreateTLSCertificateBase64(t *testing.T) {
@@ -108,23 +107,14 @@ func TestGetOrCreateTLSCertificateBase64(t *testing.T) {
 	require.NoError(t, err)
 	keyBase64 := base64.StdEncoding.EncodeToString(keyPEM)
 
-	logger := logrusx.New("", "")
-	logger.Logger.ExitFunc = func(code int) { t.Fatalf("Logger called os.Exit(%v)", code) }
-	hook := test.NewLocal(logger.Logger)
-	_ = hook
-	cfg := config.MustNew(
-		context.Background(),
-		logger,
-		configx.WithValues(map[string]interface{}{
-			"dsn":                   config.DSNMemory,
-			"serve.tls.enabled":     true,
-			"serve.tls.cert.base64": certBase64,
-			"serve.tls.key.base64":  keyBase64,
-		}),
-	)
-	d, err := driver.NewRegistryWithoutInit(cfg, logger)
+	d, err := driver.New(t.Context(), driver.WithConfigOptions(configx.WithValues(map[string]interface{}{
+		"dsn":                   config.DSNMemory,
+		"serve.tls.enabled":     true,
+		"serve.tls.cert.base64": certBase64,
+		"serve.tls.key.base64":  keyBase64,
+	})))
 	require.NoError(t, err)
-	getCert := server.GetOrCreateTLSCertificate(context.Background(), d, config.AdminInterface, nil)
+	getCert := server.GetOrCreateTLSCertificate(t.Context(), d, d.Config().ServeAdmin(t.Context()).TLS, "admin")
 	require.NotNil(t, getCert)
 	tlsCert, err := getCert(nil)
 	require.NoError(t, err)
@@ -138,7 +128,7 @@ func TestGetOrCreateTLSCertificateBase64(t *testing.T) {
 }
 
 func TestCreateSelfSignedCertificate(t *testing.T) {
-	keys, err := jwk.GenerateJWK(context.Background(), jose.RS256, uuid.New().String(), "sig")
+	keys, err := jwk.GenerateJWK(jose.RS256, uuid.Must(uuid.NewV4()).String(), "sig")
 	require.NoError(t, err)
 
 	private := keys.Keys[0]

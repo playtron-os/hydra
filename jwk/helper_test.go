@@ -4,7 +4,6 @@
 package jwk_test
 
 import (
-	"context"
 	"crypto"
 	"crypto/dsa" //lint:ignore SA1019 used for testing invalid key types
 	"crypto/ecdsa"
@@ -17,20 +16,19 @@ import (
 	"strings"
 	"testing"
 
-	hydra "github.com/ory/hydra-client-go/v2"
-
 	"github.com/go-jose/go-jose/v3"
 	"github.com/go-jose/go-jose/v3/cryptosigner"
-	"github.com/golang/mock/gomock"
 	"github.com/pborman/uuid"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
-	"github.com/ory/hydra/v2/internal"
+	hydra "github.com/ory/hydra-client-go/v2"
+	"github.com/ory/hydra/v2/driver"
+	"github.com/ory/hydra/v2/internal/testhelpers"
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/contextx"
 )
 
 type fakeSigner struct {
@@ -50,7 +48,7 @@ func TestHandlerFindPublicKey(t *testing.T) {
 
 	t.Run("Test_Helper/Run_FindPublicKey_With_RSA", func(t *testing.T) {
 		t.Parallel()
-		RSIDKS, err := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+		RSIDKS, err := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 		require.NoError(t, err)
 		keys, err := jwk.FindPublicKey(RSIDKS)
 		require.NoError(t, err)
@@ -60,7 +58,7 @@ func TestHandlerFindPublicKey(t *testing.T) {
 
 	t.Run("Test_Helper/Run_FindPublicKey_With_Opaque", func(t *testing.T) {
 		t.Parallel()
-		key, err := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+		key, err := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 		RSIDKS := &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
 			Algorithm:                   "RS256",
 			Use:                         "sig",
@@ -87,7 +85,7 @@ func TestHandlerFindPublicKey(t *testing.T) {
 
 	t.Run("Test_Helper/Run_FindPublicKey_With_ECDSA", func(t *testing.T) {
 		t.Parallel()
-		ECDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.ES256, "test-id-2", "sig")
+		ECDSAIDKS, err := jwk.GenerateJWK(jose.ES256, "test-id-2", "sig")
 		require.NoError(t, err)
 		keys, err := jwk.FindPublicKey(ECDSAIDKS)
 		require.NoError(t, err)
@@ -97,7 +95,7 @@ func TestHandlerFindPublicKey(t *testing.T) {
 
 	t.Run("Test_Helper/Run_FindPublicKey_With_EdDSA", func(t *testing.T) {
 		t.Parallel()
-		EdDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.EdDSA, "test-id-3", "sig")
+		EdDSAIDKS, err := jwk.GenerateJWK(jose.EdDSA, "test-id-3", "sig")
 		require.NoError(t, err)
 		keys, err := jwk.FindPublicKey(EdDSAIDKS)
 		require.NoError(t, err)
@@ -117,7 +115,7 @@ func TestHandlerFindPublicKey(t *testing.T) {
 func TestHandlerFindPrivateKey(t *testing.T) {
 	t.Parallel()
 	t.Run("Test_Helper/Run_FindPrivateKey_With_RSA", func(t *testing.T) {
-		RSIDKS, _ := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+		RSIDKS, _ := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 		keys, err := jwk.FindPrivateKey(RSIDKS)
 		require.NoError(t, err)
 		assert.Equal(t, keys.KeyID, "test-id-1")
@@ -125,7 +123,7 @@ func TestHandlerFindPrivateKey(t *testing.T) {
 	})
 
 	t.Run("Test_Helper/Run_FindPrivateKey_With_ECDSA", func(t *testing.T) {
-		ECDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.ES256, "test-id-2", "sig")
+		ECDSAIDKS, err := jwk.GenerateJWK(jose.ES256, "test-id-2", "sig")
 		require.NoError(t, err)
 		keys, err := jwk.FindPrivateKey(ECDSAIDKS)
 		require.NoError(t, err)
@@ -134,7 +132,7 @@ func TestHandlerFindPrivateKey(t *testing.T) {
 	})
 
 	t.Run("Test_Helper/Run_FindPrivateKey_With_EdDSA", func(t *testing.T) {
-		EdDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.EdDSA, "test-id-3", "sig")
+		EdDSAIDKS, err := jwk.GenerateJWK(jose.EdDSA, "test-id-3", "sig")
 		require.NoError(t, err)
 		keys, err := jwk.FindPrivateKey(EdDSAIDKS)
 		require.NoError(t, err)
@@ -153,7 +151,7 @@ func TestHandlerFindPrivateKey(t *testing.T) {
 func TestPEMBlockForKey(t *testing.T) {
 	t.Parallel()
 	t.Run("Test_Helper/Run_PEMBlockForKey_With_RSA", func(t *testing.T) {
-		RSIDKS, err := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+		RSIDKS, err := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 		require.NoError(t, err)
 		key, err := jwk.FindPrivateKey(RSIDKS)
 		require.NoError(t, err)
@@ -164,7 +162,7 @@ func TestPEMBlockForKey(t *testing.T) {
 	})
 
 	t.Run("Test_Helper/Run_PEMBlockForKey_With_ECDSA", func(t *testing.T) {
-		ECDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.ES256, "test-id-2", "sig")
+		ECDSAIDKS, err := jwk.GenerateJWK(jose.ES256, "test-id-2", "sig")
 		require.NoError(t, err)
 		key, err := jwk.FindPrivateKey(ECDSAIDKS)
 		require.NoError(t, err)
@@ -175,7 +173,7 @@ func TestPEMBlockForKey(t *testing.T) {
 	})
 
 	t.Run("Test_Helper/Run_PEMBlockForKey_With_EdDSA", func(t *testing.T) {
-		EdDSAIDKS, err := jwk.GenerateJWK(context.Background(), jose.EdDSA, "test-id-3", "sig")
+		EdDSAIDKS, err := jwk.GenerateJWK(jose.EdDSA, "test-id-3", "sig")
 		require.NoError(t, err)
 		key, err := jwk.FindPrivateKey(EdDSAIDKS)
 		require.NoError(t, err)
@@ -195,7 +193,7 @@ func TestPEMBlockForKey(t *testing.T) {
 
 func TestExcludeOpaquePrivateKeys(t *testing.T) {
 	t.Parallel()
-	opaqueKeys, err := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+	opaqueKeys, err := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 	assert.NoError(t, err)
 	require.Len(t, opaqueKeys.Keys, 1)
 	opaqueKeys.Keys[0].Key = cryptosigner.Opaque(opaqueKeys.Keys[0].Key.(*rsa.PrivateKey))
@@ -208,14 +206,23 @@ func TestExcludeOpaquePrivateKeys(t *testing.T) {
 	assert.True(t, isPublic)
 }
 
+type regWithManager struct {
+	*driver.RegistrySQL
+	km *MockManager
+}
+
+func (r regWithManager) KeyManager() jwk.Manager { return r.km }
+
 func TestGetOrGenerateKeys(t *testing.T) {
 	t.Parallel()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
+	reg := testhelpers.NewRegistryMemory(t)
 
-	setId := uuid.NewUUID().String()
-	keyId := uuid.NewUUID().String()
+	setID := uuid.NewUUID().String()
+	keyID := uuid.NewUUID().String()
 
-	keySet, _ := jwk.GenerateJWK(context.Background(), jose.RS256, keyId, "sig")
+	keySet, err := jwk.GenerateJWK(jose.RS256, keyID, "sig")
+	require.NoError(t, err)
+	require.Len(t, keySet.Keys, 1)
 	keySetWithoutPrivateKey := &jose.JSONWebKeySet{
 		Keys: []jose.JSONWebKey{keySet.Keys[0].Public()},
 	}
@@ -228,51 +235,51 @@ func TestGetOrGenerateKeys(t *testing.T) {
 
 	t.Run("Test_Helper/Run_GetOrGenerateKeys_With_GetKeySetError", func(t *testing.T) {
 		keyManager := km(t)
-		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setId)).Return(nil, errors.New("GetKeySetError"))
-		privKey, err := jwk.GetOrGenerateKeys(context.TODO(), reg, keyManager, setId, keyId, "RS256")
+		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setID)).Return(nil, errors.New("GetKeySetError"))
+		privKey, err := jwk.GetOrGenerateKeys(t.Context(), regWithManager{RegistrySQL: reg, km: keyManager}, setID, "RS256")
 		assert.Nil(t, privKey)
 		assert.EqualError(t, err, "GetKeySetError")
 	})
 
 	t.Run("Test_Helper/Run_GetOrGenerateKeys_With_GenerateAndPersistKeySetError", func(t *testing.T) {
 		keyManager := km(t)
-		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setId)).Return(nil, errors.Wrap(x.ErrNotFound, ""))
-		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setId), gomock.Eq(keyId), gomock.Eq("RS256"), gomock.Eq("sig")).Return(nil, errors.New("GetKeySetError"))
-		privKey, err := jwk.GetOrGenerateKeys(context.TODO(), reg, keyManager, setId, keyId, "RS256")
+		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setID)).Return(nil, errors.Wrap(x.ErrNotFound, ""))
+		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setID), gomock.Eq(""), gomock.Eq("RS256"), gomock.Eq("sig")).Return(nil, errors.New("GetKeySetError"))
+		privKey, err := jwk.GetOrGenerateKeys(t.Context(), regWithManager{RegistrySQL: reg, km: keyManager}, setID, "RS256")
 		assert.Nil(t, privKey)
 		assert.EqualError(t, err, "GetKeySetError")
 	})
 
 	t.Run("Test_Helper/Run_GetOrGenerateKeys_With_GenerateAndPersistKeySetError", func(t *testing.T) {
 		keyManager := km(t)
-		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setId)).Return(keySetWithoutPrivateKey, nil)
-		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setId), gomock.Eq(keyId), gomock.Eq("RS256"), gomock.Eq("sig")).Return(nil, errors.New("GetKeySetError"))
-		privKey, err := jwk.GetOrGenerateKeys(context.TODO(), reg, keyManager, setId, keyId, "RS256")
+		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setID)).Return(keySetWithoutPrivateKey, nil)
+		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setID), gomock.Eq(""), gomock.Eq("RS256"), gomock.Eq("sig")).Return(nil, errors.New("GetKeySetError"))
+		privKey, err := jwk.GetOrGenerateKeys(t.Context(), regWithManager{RegistrySQL: reg, km: keyManager}, setID, "RS256")
 		assert.Nil(t, privKey)
 		assert.EqualError(t, err, "GetKeySetError")
 	})
 
 	t.Run("Test_Helper/Run_GetOrGenerateKeys_With_GetKeySet_ContainsMissingPrivateKey", func(t *testing.T) {
 		keyManager := km(t)
-		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setId)).Return(keySetWithoutPrivateKey, nil)
-		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setId), gomock.Eq(keyId), gomock.Eq("RS256"), gomock.Eq("sig")).Return(keySet, nil)
-		privKey, err := jwk.GetOrGenerateKeys(context.TODO(), reg, keyManager, setId, keyId, "RS256")
+		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setID)).Return(keySetWithoutPrivateKey, nil)
+		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setID), gomock.Eq(""), gomock.Eq("RS256"), gomock.Eq("sig")).Return(keySet, nil)
+		privKey, err := jwk.GetOrGenerateKeys(t.Context(), regWithManager{RegistrySQL: reg, km: keyManager}, setID, "RS256")
 		assert.NoError(t, err)
 		assert.Equal(t, privKey, &keySet.Keys[0])
 	})
 
 	t.Run("Test_Helper/Run_GetOrGenerateKeys_With_GenerateAndPersistKeySet_ContainsMissingPrivateKey", func(t *testing.T) {
 		keyManager := km(t)
-		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setId)).Return(keySetWithoutPrivateKey, nil)
-		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setId), gomock.Eq(keyId), gomock.Eq("RS256"), gomock.Eq("sig")).Return(keySetWithoutPrivateKey, nil).Times(1)
-		privKey, err := jwk.GetOrGenerateKeys(context.TODO(), reg, keyManager, setId, keyId, "RS256")
+		keyManager.EXPECT().GetKeySet(gomock.Any(), gomock.Eq(setID)).Return(keySetWithoutPrivateKey, nil)
+		keyManager.EXPECT().GenerateAndPersistKeySet(gomock.Any(), gomock.Eq(setID), gomock.Eq(""), gomock.Eq("RS256"), gomock.Eq("sig")).Return(keySetWithoutPrivateKey, nil).Times(1)
+		privKey, err := jwk.GetOrGenerateKeys(t.Context(), regWithManager{RegistrySQL: reg, km: keyManager}, setID, "RS256")
 		assert.Nil(t, privKey)
 		assert.EqualError(t, err, "key not found")
 	})
 }
 
 func TestOnlyPublicSDKKeys(t *testing.T) {
-	set, err := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+	set, err := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 	require.NoError(t, err)
 
 	out, err := json.Marshal(set.Keys)

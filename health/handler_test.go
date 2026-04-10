@@ -4,26 +4,22 @@
 package health
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/ory/x/contextx"
-
 	"github.com/stretchr/testify/require"
 
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-	"github.com/ory/hydra/v2/x"
+	"github.com/ory/hydra/v2/driver"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/dbal"
 	"github.com/ory/x/healthx"
+	"github.com/ory/x/httprouterx"
 )
 
 func TestPublicHealthHandler(t *testing.T) {
-	ctx := context.Background()
-
 	doCORSRequest := func(t *testing.T, endpoint string) *http.Response {
 		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 		require.NoError(t, err)
@@ -55,31 +51,29 @@ func TestPublicHealthHandler(t *testing.T) {
 		{
 			name: "with CORS enabled",
 			config: map[string]interface{}{
-				"cors.allowed_origins":   []string{"https://example.com"},
-				"cors.enabled":           true,
-				"cors.allowed_methods":   []string{"GET"},
-				"cors.allow_credentials": true,
+				"serve.public.cors.allowed_origins":   []string{"https://example.com"},
+				"serve.public.cors.enabled":           true,
+				"serve.public.cors.allowed_methods":   []string{"GET"},
+				"serve.public.cors.allow_credentials": true,
 			},
 			verifyResponse: expectCORSHeaders,
 		},
 		{
 			name: "with CORS disabled",
 			config: map[string]interface{}{
-				"cors.enabled": false,
+				"serve.public.cors.enabled": false,
 			},
 			verifyResponse: expectNoCORSHeaders,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			conf := internal.NewConfigurationWithDefaults()
-			for k, v := range tc.config {
-				conf.MustSet(ctx, config.PublicInterface.Key(k), v)
-			}
+			// we explicitly don't restore from the backup because that has the wrong migration status
+			reg := testhelpers.NewRegistrySQLFromURL(t, dbal.NewSQLiteTestDatabase(t), false, false, driver.WithConfigOptions(configx.WithValues(tc.config)))
+			require.NoError(t, reg.Migrator().MigrateUp(t.Context()))
+			require.NoError(t, reg.InitNetwork(t.Context()))
 
-			reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
-
-			public := x.NewRouterPublic()
-			reg.RegisterRoutes(ctx, x.NewRouterAdmin(conf.AdminURL), public)
+			public := httprouterx.NewTestRouterPublic(t)
+			reg.RegisterPublicRoutes(t.Context(), public)
 
 			ts := httptest.NewServer(public)
 

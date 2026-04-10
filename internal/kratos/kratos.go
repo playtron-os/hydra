@@ -11,9 +11,10 @@ import (
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/ory/fosite"
+	"github.com/ory/x/logrusx"
+
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/x"
+	"github.com/ory/hydra/v2/fosite"
 	client "github.com/ory/kratos-client-go"
 	"github.com/ory/x/httpx"
 	"github.com/ory/x/otelx"
@@ -22,16 +23,16 @@ import (
 type (
 	dependencies interface {
 		config.Provider
-		x.HTTPClientProvider
-		x.TracingProvider
-		x.RegistryLogger
+		httpx.ClientProvider
+		otelx.Provider
+		logrusx.Provider
 	}
 	Provider interface {
 		Kratos() Client
 	}
 	Client interface {
 		DisableSession(ctx context.Context, identityProviderSessionID string) error
-		Authenticate(ctx context.Context, name, secret string) error
+		Authenticate(ctx context.Context, name, secret string) (*client.Session, error)
 	}
 	Default struct {
 		dependencies
@@ -42,7 +43,7 @@ func New(d dependencies) Client {
 	return &Default{dependencies: d}
 }
 
-func (k *Default) Authenticate(ctx context.Context, name, secret string) (err error) {
+func (k *Default) Authenticate(ctx context.Context, name, secret string) (session *client.Session, err error) {
 	ctx, span := k.Tracer(ctx).Tracer().Start(ctx, "kratos.Authenticate")
 	otelx.End(span, &err)
 
@@ -52,17 +53,17 @@ func (k *Default) Authenticate(ctx context.Context, name, secret string) (err er
 		span.SetAttributes(attribute.Bool("skipped", true))
 		span.SetAttributes(attribute.String("reason", "kratos public url not set"))
 
-		return errors.New("kratos public url not set")
+		return nil, errors.New("kratos public url not set")
 	}
 
 	kratos := k.newKratosClient(ctx, publicURL)
 
 	flow, _, err := kratos.FrontendAPI.CreateNativeLoginFlow(ctx).Execute()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_, _, err = kratos.FrontendAPI.UpdateLoginFlow(ctx).Flow(flow.Id).UpdateLoginFlowBody(client.UpdateLoginFlowBody{
+	res, _, err := kratos.FrontendAPI.UpdateLoginFlow(ctx).Flow(flow.Id).UpdateLoginFlowBody(client.UpdateLoginFlowBody{
 		UpdateLoginFlowWithPasswordMethod: &client.UpdateLoginFlowWithPasswordMethod{
 			Method:     "password",
 			Identifier: name,
@@ -70,10 +71,10 @@ func (k *Default) Authenticate(ctx context.Context, name, secret string) (err er
 		},
 	}).Execute()
 	if err != nil {
-		return fosite.ErrNotFound.WithWrap(err)
+		return nil, fosite.ErrNotFound.WithWrap(err)
 	}
 
-	return nil
+	return &res.Session, nil
 }
 
 func (k *Default) DisableSession(ctx context.Context, identityProviderSessionID string) (err error) {

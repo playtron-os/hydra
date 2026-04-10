@@ -13,30 +13,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/tidwall/gjson"
-
+	"github.com/gofrs/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	goauth2 "golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 
+	hc "github.com/ory/hydra/v2/client"
+	"github.com/ory/hydra/v2/driver"
+	"github.com/ory/hydra/v2/driver/config"
 	"github.com/ory/hydra/v2/flow"
 	"github.com/ory/hydra/v2/internal/testhelpers"
 	hydraoauth2 "github.com/ory/hydra/v2/oauth2"
-	"github.com/ory/x/contextx"
-
-	hc "github.com/ory/hydra/v2/client"
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
-	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/requirex"
+	"github.com/ory/x/configx"
 )
 
 func TestClientCredentials(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
-	reg := internal.NewMockedRegistry(t, &contextx.Default{})
-	reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, "opaque")
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValue(config.KeyAccessTokenStrategy, "opaque")))
 	public, admin := testhelpers.NewOAuth2Server(ctx, t, reg)
 
 	var newCustomClient = func(t *testing.T, c *hc.Client) (*hc.Client, clientcredentials.Config) {
@@ -52,15 +49,14 @@ func TestClientCredentials(t *testing.T) {
 	}
 
 	var newClient = func(t *testing.T) (*hc.Client, clientcredentials.Config) {
-		cc, config := newCustomClient(t, &hc.Client{
-			Secret:        uuid.New().String(),
+		return newCustomClient(t, &hc.Client{
+			Secret:        uuid.Must(uuid.NewV4()).String(),
 			RedirectURIs:  []string{public.URL + "/callback"},
 			ResponseTypes: []string{"token"},
 			GrantTypes:    []string{"client_credentials"},
 			Scope:         "foobar",
 			Audience:      []string{"https://api.ory.sh/"},
 		})
-		return cc, config
 	}
 
 	var getToken = func(t *testing.T, conf clientcredentials.Config) (*goauth2.Token, error) {
@@ -79,7 +75,7 @@ func TestClientCredentials(t *testing.T) {
 	}
 
 	var inspectToken = func(t *testing.T, token *goauth2.Token, cl *hc.Client, conf clientcredentials.Config, strategy string, expectedExp time.Time, checkExtraClaims bool) {
-		introspection := testhelpers.IntrospectToken(t, &goauth2.Config{ClientID: cl.GetID(), ClientSecret: conf.ClientSecret}, token.AccessToken, admin)
+		introspection := testhelpers.IntrospectToken(t, token.AccessToken, admin)
 
 		check := func(res gjson.Result) {
 			assert.EqualValues(t, cl.GetID(), res.Get("client_id").String(), "%s", res.Raw)
@@ -87,7 +83,7 @@ func TestClientCredentials(t *testing.T) {
 			assert.EqualValues(t, reg.Config().IssuerURL(ctx).String(), res.Get("iss").String(), "%s", res.Raw)
 
 			assert.EqualValues(t, res.Get("nbf").Int(), res.Get("iat").Int(), "%s", res.Raw)
-			requirex.EqualTime(t, expectedExp, time.Unix(res.Get("exp").Int(), 0), time.Second)
+			assert.WithinDuration(t, expectedExp, time.Unix(res.Get("exp").Int(), 0), 2*time.Second)
 
 			assert.EqualValues(t, encodeOr(t, conf.EndpointParams["audience"], "[]"), res.Get("aud").Raw, "%s", res.Raw)
 
@@ -106,10 +102,7 @@ func TestClientCredentials(t *testing.T) {
 			return
 		}
 
-		body, err := x.DecodeSegment(strings.Split(token.AccessToken, ".")[1])
-		require.NoError(t, err)
-
-		jwtClaims := gjson.ParseBytes(body)
+		jwtClaims := gjson.ParseBytes(testhelpers.InsecureDecodeJWT(t, token.AccessToken))
 		assert.NotEmpty(t, jwtClaims.Get("jti").String())
 		assert.EqualValues(t, encodeOr(t, conf.Scopes, "[]"), jwtClaims.Get("scp").Raw, "%s", introspection.Raw)
 		check(jwtClaims)
@@ -208,9 +201,8 @@ func TestClientCredentials(t *testing.T) {
 			return func(t *testing.T) {
 				reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, strategy)
 
-				secret := uuid.New().String()
 				cl, conf := newCustomClient(t, &hc.Client{
-					Secret:        secret,
+					Secret:        uuid.Must(uuid.NewV4()).String(),
 					RedirectURIs:  []string{public.URL + "/callback"},
 					ResponseTypes: []string{"token"},
 					GrantTypes:    []string{"client_credentials"},
@@ -233,13 +225,13 @@ func TestClientCredentials(t *testing.T) {
 		run := func(strategy string) func(t *testing.T) {
 			return func(t *testing.T) {
 				reg.Config().MustSet(ctx, config.KeyAccessTokenStrategy, strategy)
-				cl, conf := newClient(t)
+				_, conf := newClient(t)
 				conf.Scopes = []string{}
 				token, err := getToken(t, conf)
 				require.NoError(t, err)
 				expected := time.Now().Add(duration)
 				assert.WithinDuration(t, expected, token.Expiry, 5*time.Second)
-				introspection := testhelpers.IntrospectToken(t, &goauth2.Config{ClientID: cl.GetID(), ClientSecret: conf.ClientSecret}, token.AccessToken, admin)
+				introspection := testhelpers.IntrospectToken(t, token.AccessToken, admin)
 				assert.WithinDuration(t, expected, time.Unix(introspection.Get("exp").Int(), 0), 5*time.Second)
 			}
 		}
@@ -304,9 +296,8 @@ func TestClientCredentials(t *testing.T) {
 
 				defer reg.Config().MustSet(ctx, config.KeyTokenHook, nil)
 
-				secret := uuid.New().String()
 				cl, conf := newCustomClient(t, &hc.Client{
-					Secret:        secret,
+					Secret:        uuid.Must(uuid.NewV4()).String(),
 					RedirectURIs:  []string{public.URL + "/callback"},
 					ResponseTypes: []string{"token"},
 					GrantTypes:    []string{"client_credentials"},

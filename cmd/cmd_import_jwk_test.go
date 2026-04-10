@@ -5,28 +5,27 @@ package cmd_test
 
 import (
 	"bytes"
+	"cmp"
+	_ "embed"
 	"encoding/json"
 	"testing"
 
 	"github.com/gofrs/uuid"
-	"github.com/stretchr/testify/require"
-
-	"github.com/ory/x/snapshotx"
-	"github.com/ory/x/stringsx"
-
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
-
-	_ "embed"
 
 	"github.com/ory/hydra/v2/cmd"
 	"github.com/ory/x/cmdx"
+	"github.com/ory/x/snapshotx"
 )
 
 //go:embed stub/jwk.json
 var stubJsonWebKeySet []byte
 
 func TestImportJWKS(t *testing.T) {
+	t.Parallel()
+
 	c := cmd.NewKeysImportCmd()
 	_ = setup(t, c)
 
@@ -53,8 +52,8 @@ func TestImportJWKS(t *testing.T) {
 			actual := gjson.Parse(cmdx.ExecNoErr(t, c, args...))
 			assert.Len(t, actual.Get("keys.0").Array(), 1, "%s", actual.Raw)
 			assert.NotEmpty(t, actual.Get("keys.0.kid").String(), "%s", actual.Raw)
-			assert.NotEmpty(t, stringsx.Coalesce(actual.Get("keys.0.x").String(), actual.Get("keys.0.n").String()), "%s", actual.Raw)
-			assert.Equal(t, stringsx.Coalesce(tc[0], "RS256"), actual.Get("keys.0.alg").String(), "%s", actual.Raw)
+			assert.NotEmpty(t, cmp.Or(actual.Get("keys.0.x").String(), actual.Get("keys.0.n").String()), "%s", actual.Raw)
+			assert.Equal(t, cmp.Or(tc[0], "RS256"), actual.Get("keys.0.alg").String(), "%s", actual.Raw)
 		})
 	}
 

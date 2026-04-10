@@ -12,18 +12,12 @@ import (
 	"encoding/pem"
 	"sync"
 
-	"github.com/gofrs/uuid"
-
 	"github.com/go-jose/go-jose/v3"
 
 	"github.com/ory/hydra/v2/driver"
-	"github.com/ory/hydra/v2/driver/config"
-
-	"github.com/pkg/errors"
-
-	"github.com/ory/x/tlsx"
-
 	"github.com/ory/hydra/v2/jwk"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/tlsx"
 )
 
 const (
@@ -44,21 +38,22 @@ var lock sync.Mutex
 // GetOrCreateTLSCertificate returns a function for use with
 // "net/tls".Config.GetCertificate. If the certificate and key are read from
 // disk, they will be automatically reloaded until stopReload is close()'d.
-func GetOrCreateTLSCertificate(ctx context.Context, d driver.Registry, iface config.ServeInterface, stopReload <-chan struct{}) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+func GetOrCreateTLSCertificate(ctx context.Context, d *driver.RegistrySQL, tlsConfig configx.TLS, ifaceName string) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
 	// check if certificates are configured
-	certFunc, err := d.Config().TLS(ctx, iface).GetCertificateFunc(stopReload, d.Logger())
-	if err == nil {
-		return certFunc
-	} else if !errors.Is(err, tlsx.ErrNoCertificatesConfigured) {
+	if certFunc, err := tlsConfig.GetCertFunc(ctx, d.Logger(), ifaceName); err != nil {
 		d.Logger().WithError(err).Fatal("Unable to load HTTPS TLS Certificate")
 		return nil // in case Fatal is hooked
+	} else if certFunc != nil {
+		return certFunc
 	}
 
+	d.Logger().Infof("No certificate found for %s, generating a self-signed certificate.", ifaceName)
+
 	// no certificates configured: self-sign a new cert
-	priv, err := jwk.GetOrGenerateKeys(ctx, d, d.SoftwareKeyManager(), TlsKeyName, uuid.Must(uuid.NewV4()).String(), "RS256")
+	priv, err := jwk.GetOrGenerateKeys(ctx, d, TlsKeyName, "RS256")
 	if err != nil {
 		d.Logger().WithError(err).Fatal("Unable to fetch or generate HTTPS TLS key pair")
 		return nil // in case Fatal is hooked
@@ -72,12 +67,12 @@ func GetOrCreateTLSCertificate(ctx context.Context, d driver.Registry, iface con
 		}
 
 		AttachCertificate(priv, cert)
-		if err := d.SoftwareKeyManager().DeleteKey(ctx, TlsKeyName, priv.KeyID); err != nil {
+		if err := d.KeyManager().DeleteKey(ctx, TlsKeyName, priv.KeyID); err != nil {
 			d.Logger().WithError(err).Fatal(`Could not update (delete) the self signed TLS certificate`)
 			return nil // in case Fatal is hooked
 		}
 
-		if err := d.SoftwareKeyManager().AddKey(ctx, TlsKeyName, priv); err != nil {
+		if err := d.KeyManager().AddKey(ctx, TlsKeyName, priv); err != nil {
 			d.Logger().WithError(err).Fatalf(`Could not update (add) the self signed TLS certificate: %s %x %d`, cert.SignatureAlgorithm, cert.Signature, len(cert.Signature))
 			return nil // in case Fatalf is hooked
 		}

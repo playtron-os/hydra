@@ -9,33 +9,29 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-
-	"github.com/ory/x/otelx/semconv"
-
-	"github.com/ory/x/servicelocatorx"
-
-	"github.com/ory/x/httprouterx"
-
-	"github.com/ory/analytics-go/v5"
-	"github.com/ory/x/configx"
-
-	"github.com/ory/x/reqlog"
-
-	"github.com/julienschmidt/httprouter"
 	"github.com/rs/cors"
 	"github.com/spf13/cobra"
 	"github.com/urfave/negroni"
-	"go.uber.org/automaxprocs/maxprocs"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/errgroup"
 
+	"github.com/ory/analytics-go/v5"
 	"github.com/ory/graceful"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/contextx"
 	"github.com/ory/x/healthx"
+	"github.com/ory/x/httprouterx"
 	"github.com/ory/x/metricsx"
 	"github.com/ory/x/networkx"
 	"github.com/ory/x/otelx"
+	"github.com/ory/x/otelx/semconv"
+	"github.com/ory/x/prometheusx"
+	"github.com/ory/x/reqlog"
+	"github.com/ory/x/serverx"
+	"github.com/ory/x/tlsx"
+	"github.com/ory/x/urlx"
 
 	"github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/consent"
@@ -44,192 +40,206 @@ import (
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/oauth2"
 	"github.com/ory/hydra/v2/oauth2/sessiontoken"
-	"github.com/ory/hydra/v2/x"
-	prometheus "github.com/ory/x/prometheusx"
 )
 
-var _ = &consent.Handler{}
+func ensureNoMemoryDSN(r *driver.RegistrySQL) {
+	if r.Config().DSN() == "memory" {
+		r.Logger().Fatalf(`When using "hydra serve admin" or "hydra serve public" the DSN can not be set to "memory".`)
+	}
+}
 
-func EnhanceMiddleware(ctx context.Context, sl *servicelocatorx.Options, d driver.Registry, n *negroni.Negroni, address string, router *httprouter.Router, iface config.ServeInterface) http.Handler {
-	if !networkx.AddressIsUnixSocket(address) {
-		n.UseFunc(x.RejectInsecureRequests(d, d.Config().TLS(ctx, iface)))
+func RunServeAdmin(dOpts []driver.OptionsModifier) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		fmt.Println(banner(config.Version))
+
+		ctx := cmd.Context()
+
+		d, err := driver.New(ctx, append(dOpts, driver.WithConfigOptions(configx.WithFlags(cmd.Flags())))...)
+		if err != nil {
+			return err
+		}
+		ensureNoMemoryDSN(d)
+
+		srv, err := adminServer(ctx, d, sqa(ctx, d, cmd))
+		if err != nil {
+			return err
+		}
+		return srv()
+	}
+}
+
+func RunServePublic(dOpts []driver.OptionsModifier) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		fmt.Println(banner(config.Version))
+
+		ctx := cmd.Context()
+
+		d, err := driver.New(ctx, append(dOpts, driver.WithConfigOptions(configx.WithFlags(cmd.Flags())))...)
+		if err != nil {
+			return err
+		}
+		ensureNoMemoryDSN(d)
+
+		srv, err := publicServer(ctx, d, sqa(ctx, d, cmd))
+		if err != nil {
+			return err
+		}
+		return srv()
+	}
+}
+
+func RunServeAll(dOpts []driver.OptionsModifier) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		fmt.Println(banner(config.Version))
+
+		ctx := cmd.Context()
+
+		d, err := driver.New(ctx, append(dOpts, driver.WithConfigOptions(configx.WithFlags(cmd.Flags())))...)
+		if err != nil {
+			return err
+		}
+
+		eg, ctx := errgroup.WithContext(ctx)
+		ms := sqa(ctx, d, cmd)
+
+		srvAdmin, err := adminServer(ctx, d, ms)
+		if err != nil {
+			return err
+		}
+		srvPublic, err := publicServer(ctx, d, ms)
+		if err != nil {
+			return err
+		}
+
+		eg.Go(srvAdmin)
+		eg.Go(srvPublic)
+		return eg.Wait()
+	}
+}
+
+var httpMetrics = prometheusx.NewHTTPMetrics("hydra", prometheusx.HTTPPrefix, config.Version, config.Commit, config.Date)
+
+func adminServer(ctx context.Context, d *driver.RegistrySQL, sqaMetrics *metricsx.Service) (func() error, error) {
+	cfg := d.Config().ServeAdmin(contextx.RootContext)
+
+	n := negroni.New()
+
+	logger := reqlog.
+		NewMiddlewareFromLogger(d.Logger(),
+			fmt.Sprintf("hydra/admin: %s", d.Config().IssuerURL(ctx).String()))
+	if cfg.RequestLog.DisableHealth {
+		logger.ExcludePaths(healthx.AliveCheckPath, healthx.ReadyCheckPath, "/admin"+prometheusx.MetricsPrometheusPath)
 	}
 
-	for _, mw := range sl.HTTPMiddlewares() {
-		n.UseFunc(mw)
+	n.UseFunc(httprouterx.TrimTrailingSlashNegroni)
+	n.UseFunc(httprouterx.NoCacheNegroni)
+	n.UseFunc(httprouterx.AddAdminPrefixIfNotPresentNegroni)
+	n.UseFunc(semconv.Middleware)
+	n.Use(logger)
+
+	if cfg.TLS.Enabled && !networkx.AddressIsUnixSocket(cfg.Host) {
+		mw, err := tlsx.EnforceTLSRequests(d, cfg.TLS.AllowTerminationFrom)
+		if err != nil {
+			return nil, err
+		}
+		n.Use(mw)
+	}
+
+	for _, mw := range d.HTTPMiddlewares() {
+		n.Use(mw)
 	}
 	n.UseFunc(func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-		cfg, enabled := d.Config().CORS(r.Context(), iface)
+		cfg, enabled := d.Config().CORSAdmin(r.Context())
 		if !enabled {
 			next(w, r)
 			return
 		}
 		cors.New(cfg).ServeHTTP(w, r, next)
 	})
+	n.Use(sqaMetrics)
+
+	router := httprouterx.NewRouterAdminWithPrefix(httpMetrics)
+	router.Handler("", "/", serverx.DefaultNotFoundHandler)
+	d.RegisterAdminRoutes(router)
 
 	n.UseHandler(router)
 
-	return n
+	n.UseFunc(otelx.SpanNameRecorderNegroniFunc)
+	return func() error {
+		return serve(ctx, d, cfg, n, "admin")
+	}, nil
 }
 
-func ensureNoMemoryDSN(r driver.Registry) {
-	if r.Config().DSN() == "memory" {
-		r.Logger().Fatalf(`When using "hydra serve admin" or "hydra serve public" the DSN can not be set to "memory".`)
-	}
-}
+func publicServer(ctx context.Context, d *driver.RegistrySQL, sqaMetrics *metricsx.Service) (func() error, error) {
+	cfg := d.Config().ServePublic(contextx.RootContext)
 
-func RunServeAdmin(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) func(cmd *cobra.Command, args []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		sl := servicelocatorx.NewOptions(slOpts...)
+	n := negroni.New()
 
-		d, err := driver.New(cmd.Context(), sl, append(dOpts, driver.WithOptions(append(cOpts, configx.WithFlags(cmd.Flags()))...)))
-		if err != nil {
-			return err
-		}
-		ensureNoMemoryDSN(d)
-
-		admin, _, adminmw, _ := setup(ctx, d, cmd)
-		d.PrometheusManager().RegisterRouter(admin.Router)
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-
-		go serve(
-			ctx,
-			d,
-			cmd,
-			&wg,
-			config.AdminInterface,
-			EnhanceMiddleware(ctx, sl, d, adminmw, d.Config().ListenOn(config.AdminInterface), admin.Router, config.AdminInterface),
-			d.Config().ListenOn(config.AdminInterface),
-			d.Config().SocketPermission(config.AdminInterface),
-		)
-
-		wg.Wait()
-		return nil
-	}
-}
-
-func RunServePublic(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) func(cmd *cobra.Command, args []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		sl := servicelocatorx.NewOptions(slOpts...)
-
-		d, err := driver.New(cmd.Context(), sl, append(dOpts, driver.WithOptions(append(cOpts, configx.WithFlags(cmd.Flags()))...)))
-		if err != nil {
-			return err
-		}
-		ensureNoMemoryDSN(d)
-
-		_, public, _, publicmw := setup(ctx, d, cmd)
-		d.PrometheusManager().RegisterRouter(public.Router)
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-
-		go serve(
-			ctx,
-			d,
-			cmd,
-			&wg,
-			config.PublicInterface,
-			EnhanceMiddleware(ctx, sl, d, publicmw, d.Config().ListenOn(config.PublicInterface), public.Router, config.PublicInterface),
-			d.Config().ListenOn(config.PublicInterface),
-			d.Config().SocketPermission(config.PublicInterface),
-		)
-
-		wg.Wait()
-		return nil
-	}
-}
-
-func RunServeAll(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) func(cmd *cobra.Command, args []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		sl := servicelocatorx.NewOptions(slOpts...)
-
-		d, err := driver.New(cmd.Context(), sl, append(dOpts, driver.WithOptions(append(cOpts, configx.WithFlags(cmd.Flags()))...)))
-		if err != nil {
-			return err
-		}
-
-		admin, public, adminmw, publicmw := setup(ctx, d, cmd)
-
-		d.PrometheusManager().RegisterRouter(admin.Router)
-		d.PrometheusManager().RegisterRouter(public.Router)
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go serve(
-			ctx,
-			d,
-			cmd,
-			&wg,
-			config.PublicInterface,
-			EnhanceMiddleware(ctx, sl, d, publicmw, d.Config().ListenOn(config.PublicInterface), public.Router, config.PublicInterface),
-			d.Config().ListenOn(config.PublicInterface),
-			d.Config().SocketPermission(config.PublicInterface),
-		)
-
-		go serve(
-			ctx,
-			d,
-			cmd,
-			&wg,
-			config.AdminInterface,
-			EnhanceMiddleware(ctx, sl, d, adminmw, d.Config().ListenOn(config.AdminInterface), admin.Router, config.AdminInterface),
-			d.Config().ListenOn(config.AdminInterface),
-			d.Config().SocketPermission(config.AdminInterface),
-		)
-
-		wg.Wait()
-		return nil
-	}
-}
-
-func setup(ctx context.Context, d driver.Registry, cmd *cobra.Command) (admin *httprouterx.RouterAdmin, public *httprouterx.RouterPublic, adminmw, publicmw *negroni.Negroni) {
-	fmt.Println(banner(config.Version))
-
-	if d.Config().CGroupsV1AutoMaxProcsEnabled() {
-		_, err := maxprocs.Set(maxprocs.Logger(d.Logger().Infof))
-
-		if err != nil {
-			d.Logger().WithError(err).Fatal("Couldn't set GOMAXPROCS")
-		}
-	}
-
-	adminmw = negroni.New()
-	publicmw = negroni.New()
-
-	admin = x.NewRouterAdmin(d.Config().AdminURL)
-	public = x.NewRouterPublic()
-
-	adminLogger := reqlog.
-		NewMiddlewareFromLogger(d.Logger(),
-			fmt.Sprintf("hydra/admin: %s", d.Config().IssuerURL(ctx).String()))
-	if d.Config().DisableHealthAccessLog(config.AdminInterface) {
-		adminLogger = adminLogger.ExcludePaths(healthx.AliveCheckPath, healthx.ReadyCheckPath, "/admin"+prometheus.MetricsPrometheusPath)
-	}
-
-	adminmw.UseFunc(semconv.Middleware)
-	adminmw.Use(adminLogger)
-	adminmw.Use(d.PrometheusManager())
-
-	publicLogger := reqlog.NewMiddlewareFromLogger(
+	logger := reqlog.NewMiddlewareFromLogger(
 		d.Logger(),
 		fmt.Sprintf("hydra/public: %s", d.Config().IssuerURL(ctx).String()),
 	)
-	if d.Config().DisableHealthAccessLog(config.PublicInterface) {
-		publicLogger.ExcludePaths(healthx.AliveCheckPath, healthx.ReadyCheckPath)
+	if cfg.RequestLog.DisableHealth {
+		logger.ExcludePaths(healthx.AliveCheckPath, healthx.ReadyCheckPath)
 	}
 
-	publicmw.UseFunc(semconv.Middleware)
-	publicmw.Use(publicLogger)
-	publicmw.Use(d.PrometheusManager())
+	n.UseFunc(httprouterx.TrimTrailingSlashNegroni)
+	n.UseFunc(httprouterx.NoCacheNegroni)
+	n.UseFunc(semconv.Middleware)
+	n.Use(logger)
+	if cfg.TLS.Enabled && !networkx.AddressIsUnixSocket(cfg.Host) {
+		mw, err := tlsx.EnforceTLSRequests(d, cfg.TLS.AllowTerminationFrom)
+		if err != nil {
+			return nil, err
+		}
+		n.Use(mw)
+	}
 
-	metrics := metricsx.New(
+	for _, mw := range d.HTTPMiddlewares() {
+		n.Use(mw)
+	}
+	n.UseFunc(func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+		cfg, enabled := d.Config().CORSPublic(r.Context())
+		if !enabled {
+			next(w, r)
+			return
+		}
+		cors.New(cfg).ServeHTTP(w, r, next)
+	})
+	n.Use(sqaMetrics)
+
+	router := httprouterx.NewRouterPublic(httpMetrics)
+	router.Handler("", "/", serverx.DefaultNotFoundHandler)
+	d.RegisterPublicRoutes(ctx, router)
+
+	n.UseHandler(router)
+	n.UseFunc(otelx.SpanNameRecorderNegroniFunc)
+	return func() error {
+		return serve(ctx, d, cfg, n, "public")
+	}, nil
+}
+
+func sqa(ctx context.Context, d *driver.RegistrySQL, cmd *cobra.Command) *metricsx.Service {
+	urls := []string{
+		d.Config().IssuerURL(ctx).Host,
+		d.Config().PublicURL(ctx).Host,
+		d.Config().AdminURL(ctx).Host,
+		d.Config().ServePublic(ctx).BaseURL.Host,
+		d.Config().ServeAdmin(ctx).BaseURL.Host,
+		d.Config().LoginURL(ctx).Host,
+		d.Config().LogoutURL(ctx).Host,
+		d.Config().ConsentURL(ctx).Host,
+		d.Config().RegistrationURL(ctx).Host,
+	}
+	if c, y := d.Config().CORSPublic(ctx); y {
+		urls = append(urls, c.AllowedOrigins...)
+	}
+	if c, y := d.Config().CORSAdmin(ctx); y {
+		urls = append(urls, c.AllowedOrigins...)
+	}
+	host := urlx.ExtractPublicAddress(urls...)
+
+	return metricsx.New(
 		cmd,
 		d.Logger(),
 		d.Config().Source(ctx),
@@ -246,7 +256,7 @@ func setup(ctx context.Context, d driver.Registry, cmd *cobra.Command) (admin *h
 				"/admin" + jwk.KeyHandlerPath,
 				jwk.WellKnownKeysPath,
 
-				"/admin" + client.ClientsHandlerPath,
+				urlx.MustJoin("/admin", client.ClientsHandlerPath),
 				client.DynClientsHandlerPath,
 
 				oauth2.DefaultConsentPath,
@@ -282,8 +292,8 @@ func setup(ctx context.Context, d driver.Registry, cmd *cobra.Command) (admin *h
 				"/admin" + healthx.ReadyCheckPath,
 				healthx.VersionPath,
 				"/admin" + healthx.VersionPath,
-				prometheus.MetricsPrometheusPath,
-				"/admin" + prometheus.MetricsPrometheusPath,
+				prometheusx.MetricsPrometheusPath,
+				"/admin" + prometheusx.MetricsPrometheusPath,
 				"/",
 			},
 			BuildVersion: config.Version,
@@ -296,60 +306,45 @@ func setup(ctx context.Context, d driver.Registry, cmd *cobra.Command) (admin *h
 				BatchSize:            1000,
 				Interval:             time.Hour * 6,
 			},
+			Hostname: host,
 		},
 	)
-
-	adminmw.Use(metrics)
-	publicmw.Use(metrics)
-
-	d.RegisterRoutes(ctx, admin, public)
-
-	return
 }
 
 func serve(
 	ctx context.Context,
-	d driver.Registry,
-	cmd *cobra.Command,
-	wg *sync.WaitGroup,
-	iface config.ServeInterface,
+	d *driver.RegistrySQL,
+	cfg *configx.Serve,
 	handler http.Handler,
-	address string,
-	permission *configx.UnixPermission,
-) {
-	defer wg.Done()
-
-	if tracer := d.Tracer(cmd.Context()); tracer.IsLoaded() {
-		handler = otelx.TraceHandler(
-			handler,
+	ifaceName string,
+) error {
+	if tracer := d.Tracer(ctx); tracer.IsLoaded() {
+		handler = otelx.NewMiddleware(handler, ifaceName,
 			otelhttp.WithTracerProvider(tracer.Provider()),
-			otelhttp.WithFilter(func(r *http.Request) bool {
-				return !strings.HasPrefix(r.URL.Path, "/admin/metrics/")
-			}),
 		)
 	}
 
 	var tlsConfig *tls.Config
-	stopReload := make(chan struct{})
-	if tc := d.Config().TLS(ctx, iface); tc.Enabled() {
+	if cfg.TLS.Enabled {
 		// #nosec G402 - This is a false positive because we use graceful.WithDefaults which sets the correct TLS settings.
-		tlsConfig = &tls.Config{GetCertificate: GetOrCreateTLSCertificate(ctx, d, iface, stopReload)}
+		tlsConfig = &tls.Config{GetCertificate: GetOrCreateTLSCertificate(ctx, d, cfg.TLS, ifaceName)}
 	}
 
-	var srv = graceful.WithDefaults(&http.Server{
+	srv := graceful.WithDefaults(&http.Server{
 		Handler:           handler,
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: time.Second * 5,
 	})
 
-	if err := graceful.Graceful(func() error {
-		d.Logger().Infof("Setting up http server on %s", address)
-		listener, err := networkx.MakeListener(address, permission)
+	addr := configx.GetAddress(cfg.Host, cfg.Port)
+	return graceful.Graceful(func() error {
+		d.Logger().Infof("Setting up http server on %s", addr)
+		listener, err := networkx.MakeListener(addr, &cfg.Socket)
 		if err != nil {
 			return err
 		}
 
-		if networkx.AddressIsUnixSocket(address) {
+		if networkx.AddressIsUnixSocket(addr) {
 			return srv.Serve(listener)
 		}
 
@@ -357,15 +352,8 @@ func serve(
 			return srv.ServeTLS(listener, "", "")
 		}
 
-		if iface == config.PublicInterface {
-			d.Logger().Warnln("HTTPS is disabled. Please ensure that your proxy is configured to provide HTTPS, and that it redirects HTTP to HTTPS.")
-		}
+		d.Logger().Warnln("HTTPS is disabled. Please ensure that your proxy is configured to provide HTTPS, and that it redirects HTTP to HTTPS.")
 
 		return srv.Serve(listener)
-	}, func(ctx context.Context) error {
-		close(stopReload)
-		return srv.Shutdown(ctx)
-	}); err != nil {
-		d.Logger().WithError(err).Fatal("Could not gracefully run server")
-	}
+	}, srv.Shutdown)
 }

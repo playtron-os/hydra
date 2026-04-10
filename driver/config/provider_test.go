@@ -6,90 +6,89 @@ package config
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/ory/fosite/token/jwt"
-	"github.com/ory/x/configx"
-	"github.com/ory/x/otelx"
 
 	"github.com/rs/cors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ory/x/urlx"
-
-	"github.com/ory/x/logrusx"
-
+	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/logrusx"
+	"github.com/ory/x/otelx"
+	"github.com/ory/x/randx"
+	"github.com/ory/x/urlx"
 )
 
-func newProvider() *DefaultProvider {
-	return MustNew(context.Background(), logrusx.New("", ""))
-}
-
-func setupEnv(env map[string]string) func(t *testing.T) func() {
-	return func(t *testing.T) (setup func()) {
-		setup = func() {
-			for k, v := range env {
-				t.Setenv(k, v)
-			}
-		}
-		return
-	}
+func newProvider(t *testing.T, opts ...configx.OptionModifier) *DefaultProvider {
+	return MustNew(t, logrusx.New("", ""), opts...)
 }
 
 func TestSubjectTypesSupported(t *testing.T) {
-	ctx := context.Background()
-	for k, tc := range []struct {
-		d   string
-		env func(t *testing.T) func()
-		e   []string
-	}{
-		{
-			d: "Load legacy environment variable in legacy format",
-			env: setupEnv(map[string]string{
-				strings.ToUpper(strings.Replace(KeySubjectTypesSupported, ".", "_", -1)):                 "public,pairwise",
-				strings.ToUpper(strings.Replace("oidc.subject_identifiers.pairwise.salt", ".", "_", -1)): "some-salt",
-			}),
-			e: []string{"public", "pairwise"},
+	ctx := t.Context()
+	for _, tc := range []struct {
+		d    string
+		vals map[string]any
+		e    []string
+	}{{
+		d:    "no subject types",
+		vals: map[string]any{KeySubjectTypesSupported: []string{}},
+		e:    []string{"public"},
+	}, {
+		d:    "public",
+		vals: map[string]any{KeySubjectTypesSupported: []string{"public"}},
+		e:    []string{"public"},
+	}, {
+		d: "pairwise",
+		vals: map[string]any{
+			KeySubjectTypesSupported:          []string{"pairwise"},
+			KeySubjectIdentifierAlgorithmSalt: "00000000",
 		},
-		{
-			d: "Load legacy environment variable in legacy format with JWT enabled",
-			env: setupEnv(map[string]string{
-				strings.ToUpper(strings.Replace(KeySubjectTypesSupported, ".", "_", -1)):                 "public,pairwise",
-				strings.ToUpper(strings.Replace("oidc.subject_identifiers.pairwise.salt", ".", "_", -1)): "some-salt",
-				strings.ToUpper(strings.Replace(KeyAccessTokenStrategy, ".", "_", -1)):                   "jwt",
-			}),
-			e: []string{"public"},
+		e: []string{"pairwise"},
+	}, {
+		d: "public and pairwise",
+		vals: map[string]any{
+			KeySubjectTypesSupported:          []string{"public", "pairwise"},
+			KeySubjectIdentifierAlgorithmSalt: "00000000",
 		},
-	} {
-		t.Run(fmt.Sprintf("case=%d/description=%s", k, tc.d), func(t *testing.T) {
-			setup := tc.env(t)
-			setup()
-			p := newProvider()
-			p.MustSet(ctx, KeySubjectIdentifierAlgorithmSalt, "00000000")
-			assert.EqualValues(t, tc.e, p.SubjectTypesSupported(ctx))
+		e: []string{"public", "pairwise"},
+	}, {
+		d: "pairwise disabled with jwt",
+		vals: map[string]any{
+			KeySubjectTypesSupported: []string{"public", "pairwise"},
+			KeyAccessTokenStrategy:   "jwt",
+		},
+		e: []string{"public"},
+	}, {
+		d: "unknown subject type",
+		vals: map[string]any{
+			KeySubjectTypesSupported:          []string{"public", "pairwise", "unknown"},
+			KeySubjectIdentifierAlgorithmSalt: "00000000",
+		},
+		e: []string{"public", "pairwise"},
+	}} {
+		t.Run(tc.d, func(t *testing.T) {
+			p := newProvider(t, configx.WithValues(tc.vals), configx.SkipValidation())
+			assert.Equal(t, tc.e, p.SubjectTypesSupported(ctx))
 		})
 	}
 }
 
 func TestWellKnownKeysUnique(t *testing.T) {
-	p := newProvider()
-	assert.EqualValues(t, []string{x.OpenIDConnectKeyName, x.OAuth2JWTKeyName}, p.WellKnownKeys(context.Background(), x.OAuth2JWTKeyName, x.OpenIDConnectKeyName, x.OpenIDConnectKeyName))
+	p := newProvider(t)
+	assert.EqualValues(t, []string{x.OpenIDConnectKeyName, x.OAuth2JWTKeyName}, p.WellKnownKeys(t.Context(), x.OAuth2JWTKeyName, x.OpenIDConnectKeyName, x.OpenIDConnectKeyName))
 }
 
 func TestCORSOptions(t *testing.T) {
 	ctx := context.Background()
-	p := newProvider()
-	p.MustSet(ctx, "serve.public.cors.enabled", true)
+	p := newProvider(t, configx.WithValue("serve.public.cors.enabled", true))
 
-	conf, enabled := p.CORS(ctx, PublicInterface)
+	conf, enabled := p.CORSPublic(ctx)
 	assert.True(t, enabled)
 
 	assert.EqualValues(t, cors.Options{
@@ -102,152 +101,135 @@ func TestCORSOptions(t *testing.T) {
 }
 
 func TestProviderAdminDisableHealthAccessLog(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
+	p := newProvider(t)
+	serve := p.ServeAdmin(t.Context())
+	assert.False(t, serve.RequestLog.DisableHealth)
 
-	p := MustNew(context.Background(), l)
-
-	value := p.DisableHealthAccessLog(AdminInterface)
-	assert.Equal(t, false, value)
-
-	p.MustSet(ctx, AdminInterface.Key(KeySuffixDisableHealthAccessLog), "true")
-
-	value = p.DisableHealthAccessLog(AdminInterface)
-	assert.Equal(t, true, value)
+	p = newProvider(t, configx.WithValue("serve.admin.request_log.disable_for_health", true))
+	serve = p.ServeAdmin(t.Context())
+	assert.True(t, serve.RequestLog.DisableHealth)
 }
 
 func TestProviderPublicDisableHealthAccessLog(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
+	p := newProvider(t)
+	serve := p.ServePublic(t.Context())
+	assert.False(t, serve.RequestLog.DisableHealth)
 
-	p := MustNew(context.Background(), l)
-
-	value := p.DisableHealthAccessLog(PublicInterface)
-	assert.Equal(t, false, value)
-
-	p.MustSet(ctx, PublicInterface.Key(KeySuffixDisableHealthAccessLog), "true")
-
-	value = p.DisableHealthAccessLog(PublicInterface)
-	assert.Equal(t, true, value)
+	p = newProvider(t, configx.WithValue("serve.public.request_log.disable_for_health", true))
+	serve = p.ServePublic(t.Context())
+	assert.True(t, serve.RequestLog.DisableHealth)
 }
 
 func TestPublicAllowDynamicRegistration(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
+	p := newProvider(t)
+	value := p.PublicAllowDynamicRegistration(t.Context())
+	assert.False(t, value)
 
-	p := MustNew(context.Background(), l)
-
-	value := p.PublicAllowDynamicRegistration(ctx)
-	assert.Equal(t, false, value)
-
-	p.MustSet(ctx, KeyPublicAllowDynamicRegistration, "true")
-
-	value = p.PublicAllowDynamicRegistration(ctx)
-	assert.Equal(t, true, value)
+	p = newProvider(t, configx.WithValue(KeyPublicAllowDynamicRegistration, true))
+	value = p.PublicAllowDynamicRegistration(t.Context())
+	assert.True(t, value)
 }
 
 func TestProviderIssuerURL(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
-	p := MustNew(context.Background(), l)
-	p.MustSet(ctx, KeyIssuerURL, "http://hydra.localhost")
-	assert.Equal(t, "http://hydra.localhost", p.IssuerURL(ctx).String())
-
-	p2 := MustNew(context.Background(), l)
-	p2.MustSet(ctx, KeyIssuerURL, "http://hydra.localhost/")
-	assert.Equal(t, "http://hydra.localhost/", p2.IssuerURL(ctx).String())
+	p := newProvider(t, configx.WithValue(KeyIssuerURL, "http://hydra.localhost"))
+	assert.Equal(t, "http://hydra.localhost", p.IssuerURL(t.Context()).String())
 }
 
 func TestProviderIssuerPublicURL(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
-	p := MustNew(context.Background(), l)
-	p.MustSet(ctx, KeyIssuerURL, "http://hydra.localhost")
-	p.MustSet(ctx, KeyPublicURL, "http://hydra.example")
+	p := newProvider(t, configx.WithValues(map[string]any{
+		KeyIssuerURL: "http://hydra.localhost",
+		KeyPublicURL: "http://hydra.example",
+	}))
 
-	assert.Equal(t, "http://hydra.localhost", p.IssuerURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/", p.PublicURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/.well-known/jwks.json", p.JWKSURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/consent", p.ConsentURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/login", p.LoginURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/logout", p.LogoutURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/oauth2/token", p.OAuth2TokenURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/oauth2/auth", p.OAuth2AuthURL(ctx).String())
-	assert.Equal(t, "http://hydra.example/userinfo", p.OIDCDiscoveryUserinfoEndpoint(ctx).String())
+	assert.Equal(t, "http://hydra.localhost", p.IssuerURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/", p.PublicURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/.well-known/jwks.json", p.JWKSURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/consent", p.ConsentURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/login", p.LoginURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/oauth2/fallbacks/logout", p.LogoutURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/oauth2/token", p.OAuth2TokenURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/oauth2/auth", p.OAuth2AuthURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.example/userinfo", p.OIDCDiscoveryUserinfoEndpoint(t.Context()).String())
 
-	p2 := MustNew(context.Background(), l)
-	p2.MustSet(ctx, KeyIssuerURL, "http://hydra.localhost/")
-	assert.Equal(t, "http://hydra.localhost/", p2.IssuerURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/", p2.PublicURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/.well-known/jwks.json", p2.JWKSURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/consent", p2.ConsentURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/login", p2.LoginURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/logout", p2.LogoutURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/oauth2/token", p2.OAuth2TokenURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/oauth2/auth", p2.OAuth2AuthURL(ctx).String())
-	assert.Equal(t, "http://hydra.localhost/userinfo", p2.OIDCDiscoveryUserinfoEndpoint(ctx).String())
+	p = newProvider(t, configx.WithValue(KeyIssuerURL, "http://hydra.localhost/"))
+	assert.Equal(t, "http://hydra.localhost/", p.IssuerURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/", p.PublicURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/.well-known/jwks.json", p.JWKSURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/consent", p.ConsentURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/login", p.LoginURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/oauth2/fallbacks/logout", p.LogoutURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/oauth2/token", p.OAuth2TokenURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/oauth2/auth", p.OAuth2AuthURL(t.Context()).String())
+	assert.Equal(t, "http://hydra.localhost/userinfo", p.OIDCDiscoveryUserinfoEndpoint(t.Context()).String())
 }
 
 func TestProviderCookieSameSiteMode(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
-
-	p := MustNew(context.Background(), l, configx.SkipValidation())
-	p.MustSet(ctx, KeyTLSEnabled, true)
-
-	p.MustSet(ctx, KeyCookieSameSiteMode, "")
-	assert.Equal(t, http.SameSiteDefaultMode, p.CookieSameSiteMode(ctx))
-
-	p.MustSet(ctx, KeyCookieSameSiteMode, "none")
-	assert.Equal(t, http.SameSiteNoneMode, p.CookieSameSiteMode(ctx))
-
-	p.MustSet(ctx, KeyCookieSameSiteMode, "lax")
-	assert.Equal(t, http.SameSiteLaxMode, p.CookieSameSiteMode(ctx))
-
-	p.MustSet(ctx, KeyCookieSameSiteMode, "strict")
-	assert.Equal(t, http.SameSiteStrictMode, p.CookieSameSiteMode(ctx))
-
-	p = MustNew(context.Background(), l, configx.SkipValidation())
-	p.MustSet(ctx, "dev", true)
-	assert.Equal(t, http.SameSiteLaxMode, p.CookieSameSiteMode(ctx))
-	p.MustSet(ctx, KeyCookieSameSiteMode, "none")
-	assert.Equal(t, http.SameSiteLaxMode, p.CookieSameSiteMode(ctx))
-
-	p.MustSet(ctx, KeyIssuerURL, "https://example.com")
-	assert.Equal(t, http.SameSiteNoneMode, p.CookieSameSiteMode(ctx))
+	for _, tc := range []struct {
+		d, mode  string
+		others   map[string]any
+		expected http.SameSite
+	}{{
+		d:        "default",
+		mode:     "",
+		expected: http.SameSiteDefaultMode,
+	}, {
+		d:        "default dev",
+		mode:     "",
+		others:   map[string]any{KeyDevelopmentMode: true},
+		expected: http.SameSiteLaxMode,
+	}, {
+		d:        "none with http",
+		mode:     "none",
+		others:   map[string]any{KeyIssuerURL: "http://example.com"},
+		expected: http.SameSiteLaxMode,
+	}, {
+		d:        "none with https",
+		mode:     "none",
+		others:   map[string]any{KeyIssuerURL: "https://example.com"},
+		expected: http.SameSiteNoneMode,
+	}, {
+		d:        "lax",
+		mode:     "lax",
+		expected: http.SameSiteLaxMode,
+	}, {
+		d:        "strict",
+		mode:     "strict",
+		expected: http.SameSiteStrictMode,
+	}} {
+		t.Run(tc.d, func(t *testing.T) {
+			p := newProvider(t, configx.WithValue(KeyCookieSameSiteMode, tc.mode), configx.WithValues(tc.others), configx.SkipValidation())
+			assert.Equal(t, tc.expected, p.CookieSameSiteMode(t.Context()))
+		})
+	}
 }
 
-func TestViperProviderValidates(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	c := MustNew(context.Background(), l, configx.WithConfigFiles("../../internal/.hydra.yaml"))
+func TestProviderValidates(t *testing.T) {
+	ctx := t.Context()
+	c := newProvider(t, configx.WithConfigFiles("../../internal/.hydra.yaml"))
 
 	// log
 	assert.Equal(t, "debug", c.Source(ctx).String(KeyLogLevel))
 	assert.Equal(t, "json", c.Source(ctx).String("log.format"))
 
 	// serve
-	assert.Equal(t, "localhost:1", c.ListenOn(PublicInterface))
-	assert.Equal(t, "localhost:2", c.ListenOn(AdminInterface))
+	servePublic, serveAdmin := c.ServePublic(ctx), c.ServeAdmin(ctx)
+	assert.Equal(t, "localhost", servePublic.Host)
+	assert.Equal(t, 1, servePublic.Port)
+	assert.Equal(t, "localhost", serveAdmin.Host)
+	assert.Equal(t, 2, serveAdmin.Port)
 
 	expectedPublicPermission := &configx.UnixPermission{
 		Owner: "hydra",
 		Group: "hydra-public-api",
-		Mode:  0775,
+		Mode:  0o775,
 	}
 	expectedAdminPermission := &configx.UnixPermission{
 		Owner: "hydra",
 		Group: "hydra-admin-api",
-		Mode:  0770,
+		Mode:  0o770,
 	}
-	assert.Equal(t, expectedPublicPermission, c.SocketPermission(PublicInterface))
-	assert.Equal(t, expectedAdminPermission, c.SocketPermission(AdminInterface))
+	assert.Equal(t, expectedPublicPermission, &servePublic.Socket)
+	assert.Equal(t, expectedAdminPermission, &serveAdmin.Socket)
 
 	expectedCors := cors.Options{
 		AllowedOrigins:   []string{"https://example.com"},
@@ -259,17 +241,23 @@ func TestViperProviderValidates(t *testing.T) {
 		Debug:            false,
 	}
 
-	gc, enabled := c.CORS(ctx, AdminInterface)
+	gc, enabled := c.CORSAdmin(ctx)
 	assert.False(t, enabled)
 	assert.Equal(t, expectedCors, gc)
 
-	gc, enabled = c.CORS(ctx, PublicInterface)
+	gc, enabled = c.CORSPublic(ctx)
 	assert.False(t, enabled)
 	assert.Equal(t, expectedCors, gc)
 
-	assert.Equal(t, []string{"127.0.0.1/32"}, c.TLS(ctx, PublicInterface).AllowTerminationFrom())
+	assert.Equal(t, []string{"127.0.0.1/32"}, c.Source(ctx).Strings("serve.tls.allow_termination_from"))
+	assert.Equal(t, []string{"127.0.0.1/32"}, servePublic.TLS.AllowTerminationFrom)
+	assert.Equal(t, []string{"127.0.0.1/32"}, serveAdmin.TLS.AllowTerminationFrom)
 	assert.Equal(t, "/path/to/file.pem", c.Source(ctx).String("serve.tls.key.path"))
+	assert.Equal(t, "/path/to/file.pem", servePublic.TLS.KeyPath)
+	assert.Equal(t, "/path/to/file.pem", serveAdmin.TLS.KeyPath)
 	assert.Equal(t, "b3J5IGh5ZHJhIGlzIGF3ZXNvbWUK", c.Source(ctx).String("serve.tls.cert.base64"))
+	assert.Equal(t, "b3J5IGh5ZHJhIGlzIGF3ZXNvbWUK", servePublic.TLS.CertBase64)
+	assert.Equal(t, "b3J5IGh5ZHJhIGlzIGF3ZXNvbWUK", serveAdmin.TLS.CertBase64)
 	assert.Equal(t, http.SameSiteLaxMode, c.CookieSameSiteMode(ctx))
 	assert.Equal(t, true, c.CookieSameSiteLegacyWorkaround(ctx))
 
@@ -279,6 +267,7 @@ func TestViperProviderValidates(t *testing.T) {
 	// webfinger
 	assert.Equal(t, []string{"hydra.openid.id-token", "hydra.jwt.access-token"}, c.WellKnownKeys(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://example.com"), c.OAuth2ClientRegistrationURL(ctx))
+	assert.Equal(t, urlx.ParseOrPanic("https://example.com/device_authorization"), c.OAuth2DeviceAuthorisationURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://example.com/jwks.json"), c.JWKSURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://example.com/auth"), c.OAuth2AuthURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://example.com/token"), c.OAuth2TokenURL(ctx))
@@ -291,12 +280,25 @@ func TestViperProviderValidates(t *testing.T) {
 	assert.Equal(t, "random_salt", c.SubjectIdentifierAlgorithmSalt(ctx))
 	assert.Equal(t, []string{"whatever"}, c.DefaultClientScope(ctx))
 
+	// refresh
+	assert.Equal(t, GracefulRefreshTokenRotation{}, c.GracefulRefreshTokenRotation(ctx))
+	require.NoError(t, c.Set(ctx, KeyRefreshTokenRotationGracePeriod, "1s"))
+	assert.Equal(t, time.Second, c.GracefulRefreshTokenRotation(ctx).Period)
+	require.NoError(t, c.Set(ctx, KeyRefreshTokenRotationGracePeriod, "2h"))
+	assert.Equal(t, 5*time.Minute, c.GracefulRefreshTokenRotation(ctx).Period)
+	require.NoError(t, c.Set(ctx, KeyRefreshTokenRotationGraceReuseCount, "2"))
+	assert.Equal(t, GracefulRefreshTokenRotation{Count: 2, Period: 2 * time.Hour}, c.GracefulRefreshTokenRotation(ctx))
+	require.NoError(t, c.Set(ctx, KeyRefreshTokenRotationGracePeriod, (time.Hour*24*200).String()))
+	assert.Equal(t, GracefulRefreshTokenRotation{Count: 2, Period: time.Hour * 24 * 180}, c.GracefulRefreshTokenRotation(ctx))
+
 	// urls
 	assert.Equal(t, urlx.ParseOrPanic("https://issuer"), c.IssuerURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://public/"), c.PublicURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://admin/"), c.AdminURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://login/"), c.LoginURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://consent/"), c.ConsentURL(ctx))
+	assert.Equal(t, urlx.ParseOrPanic("https://device/"), c.DeviceVerificationURL(ctx))
+	assert.Equal(t, urlx.ParseOrPanic("https://device/callback"), c.DeviceDoneURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://logout/"), c.LogoutURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://error/"), c.ErrorURL(ctx))
 	assert.Equal(t, urlx.ParseOrPanic("https://post_logout/"), c.LogoutRedirectURL(ctx))
@@ -314,12 +316,17 @@ func TestViperProviderValidates(t *testing.T) {
 	assert.Equal(t, 2*time.Hour, c.GetRefreshTokenLifespan(ctx))
 	assert.Equal(t, 2*time.Hour, c.GetIDTokenLifespan(ctx))
 	assert.Equal(t, 2*time.Hour, c.GetAuthorizeCodeLifespan(ctx))
+	assert.Equal(t, 2*time.Hour, c.GetDeviceAndUserCodeLifespan(ctx))
+	assert.Equal(t, 24*time.Hour, c.GetAuthenticationSessionLifespan(ctx))
 
 	// oauth2
 	assert.Equal(t, true, c.GetSendDebugMessagesToClients(ctx))
 	assert.Equal(t, 20, c.GetBCryptCost(ctx))
 	assert.Equal(t, true, c.GetEnforcePKCE(ctx))
 	assert.Equal(t, true, c.GetEnforcePKCEForPublicClients(ctx))
+	assert.Equal(t, 2*time.Hour, c.GetDeviceAuthTokenPollingInterval(ctx))
+	assert.Equal(t, 8, c.GetUserCodeLength(ctx))
+	assert.Equal(t, string(randx.AlphaUpper), string(c.GetUserCodeSymbols(ctx)))
 
 	// secrets
 	secret, err := c.GetGlobalSecret(ctx)
@@ -328,7 +335,11 @@ func TestViperProviderValidates(t *testing.T) {
 
 	cookieSecret, err := c.GetCookieSecrets(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, [][]uint8{[]byte("some-random-cookie-secret")}, cookieSecret)
+	assert.Equal(t, [][]byte{[]byte("some-random-cookie-secret")}, cookieSecret)
+
+	paginationKeys := c.GetPaginationEncryptionKeys(ctx)
+	require.Len(t, paginationKeys, 1)
+	assert.Equal(t, [32]byte{0x1a, 0x4c, 0x1, 0xbc, 0x1b, 0xd1, 0x4c, 0xdf, 0x23, 0x3, 0xd9, 0x1a, 0x2a, 0x1b, 0x68, 0xdc, 0x69, 0x17, 0xf4, 0x31, 0xd, 0x27, 0x6d, 0x86, 0x70, 0xb0, 0xae, 0x2d, 0x45, 0xe2, 0xf, 0xab}, paginationKeys[0])
 
 	// profiling
 	assert.Equal(t, "cpu", c.Source(ctx).String("profiling"))
@@ -342,7 +353,7 @@ func TestViperProviderValidates(t *testing.T) {
 				LocalAgentAddress: "127.0.0.1:6831",
 				Sampling: otelx.JaegerSampling{
 					ServerURL:    "http://sampling",
-					TraceIdRatio: 1,
+					TraceIDRatio: 1,
 				},
 			},
 			Zipkin: otelx.ZipkinConfig{
@@ -369,51 +380,62 @@ func TestSetPerm(t *testing.T) {
 	_ = (&configx.UnixPermission{
 		Owner: "",
 		Group: "",
-		Mode:  0654,
+		Mode:  0o654,
 	}).SetPermission(path)
 
 	stat, err := f.Stat()
 	require.NoError(t, err)
 
-	assert.Equal(t, os.FileMode(0654), stat.Mode())
+	assert.Equal(t, os.FileMode(0o654), stat.Mode())
 
 	require.NoError(t, f.Close())
 	require.NoError(t, os.Remove(path))
 }
 
 func TestLoginConsentURL(t *testing.T) {
-	ctx := context.Background()
-	l := logrusx.New("", "")
-	l.Logrus().SetOutput(io.Discard)
-	p := MustNew(context.Background(), l)
-	p.MustSet(ctx, KeyLoginURL, "http://localhost:8080/oauth/login")
-	p.MustSet(ctx, KeyConsentURL, "http://localhost:8080/oauth/consent")
+	p := newProvider(t, configx.WithValues(map[string]any{
+		KeyLoginURL:              "http://localhost:8080/oauth/login",
+		KeyConsentURL:            "http://localhost:8080/oauth/consent",
+		KeyDeviceVerificationURL: "http://localhost:8080/oauth/device",
+	}))
 
-	assert.Equal(t, "http://localhost:8080/oauth/login", p.LoginURL(ctx).String())
-	assert.Equal(t, "http://localhost:8080/oauth/consent", p.ConsentURL(ctx).String())
+	assert.Equal(t, "http://localhost:8080/oauth/login", p.LoginURL(t.Context()).String())
+	assert.Equal(t, "http://localhost:8080/oauth/consent", p.ConsentURL(t.Context()).String())
+	assert.Equal(t, "http://localhost:8080/oauth/device", p.DeviceVerificationURL(t.Context()).String())
 
-	p2 := MustNew(context.Background(), l)
-	p2.MustSet(ctx, KeyLoginURL, "http://localhost:3000/#/oauth/login")
-	p2.MustSet(ctx, KeyConsentURL, "http://localhost:3000/#/oauth/consent")
+	p = newProvider(t, configx.WithValues(map[string]any{
+		KeyLoginURL:              "http://localhost:3000/#/oauth/login",
+		KeyConsentURL:            "http://localhost:3000/#/oauth/consent",
+		KeyDeviceVerificationURL: "http://localhost:3000/#/oauth/device",
+	}))
 
-	assert.Equal(t, "http://localhost:3000/#/oauth/login", p2.LoginURL(ctx).String())
-	assert.Equal(t, "http://localhost:3000/#/oauth/consent", p2.ConsentURL(ctx).String())
+	assert.Equal(t, "http://localhost:3000/#/oauth/login", p.LoginURL(t.Context()).String())
+	assert.Equal(t, "http://localhost:3000/#/oauth/consent", p.ConsentURL(t.Context()).String())
+	assert.Equal(t, "http://localhost:3000/#/oauth/device", p.DeviceVerificationURL(t.Context()).String())
 }
 
-func TestInfinitRefreshTokenTTL(t *testing.T) {
+func TestInfinityRefreshTokenTTL(t *testing.T) {
+	c := newProvider(t, configx.WithValue("ttl.refresh_token", -1))
+
+	assert.Equal(t, time.Duration(-1), c.GetRefreshTokenLifespan(t.Context()))
+}
+
+func TestLimitAuthSessionLifespan(t *testing.T) {
 	ctx := context.Background()
 	l := logrusx.New("", "")
 	l.Logrus().SetOutput(io.Discard)
-	c := MustNew(context.Background(), l, configx.WithValue("ttl.refresh_token", -1))
+	c := MustNew(t, l)
+	assert.Equal(t, 30*24*time.Hour, c.GetAuthenticationSessionLifespan(ctx))
 
-	assert.Equal(t, -1*time.Nanosecond, c.GetRefreshTokenLifespan(ctx))
+	require.NoError(t, c.Set(ctx, KeyAuthenticationSessionLifespan, (time.Hour*24*300).String()))
+	assert.Equal(t, 180*24*time.Hour, c.GetAuthenticationSessionLifespan(ctx))
 }
 
 func TestCookieSecure(t *testing.T) {
 	ctx := context.Background()
 	l := logrusx.New("", "")
 	l.Logrus().SetOutput(io.Discard)
-	c := MustNew(context.Background(), l, configx.WithValue(KeyDevelopmentMode, true))
+	c := MustNew(t, l, configx.WithValue(KeyDevelopmentMode, true))
 
 	c.MustSet(ctx, KeyCookieSecure, true)
 	assert.True(t, c.CookieSecure(ctx))
@@ -429,7 +451,7 @@ func TestHookConfigs(t *testing.T) {
 	ctx := context.Background()
 	l := logrusx.New("", "")
 	l.Logrus().SetOutput(io.Discard)
-	c := MustNew(context.Background(), l, configx.SkipValidation())
+	c := MustNew(t, l, configx.SkipValidation())
 
 	for key, getFunc := range map[string]func(context.Context) *HookConfig{
 		KeyRefreshTokenHook: c.TokenRefreshHookConfig,
@@ -468,7 +490,7 @@ func TestHookConfigs(t *testing.T) {
 func TestJWTBearer(t *testing.T) {
 	l := logrusx.New("", "")
 	l.Logrus().SetOutput(io.Discard)
-	p := MustNew(context.Background(), l)
+	p := MustNew(t, l)
 
 	ctx := context.Background()
 	// p.MustSet(ctx, KeyOAuth2GrantJWTClientAuthOptional, false)
@@ -481,7 +503,7 @@ func TestJWTBearer(t *testing.T) {
 	assert.Equal(t, false, p.GetGrantTypeJWTBearerIssuedDateOptional(ctx))
 	assert.Equal(t, false, p.GetGrantTypeJWTBearerIDOptional(ctx))
 
-	p2 := MustNew(context.Background(), l)
+	p2 := MustNew(t, l)
 
 	// p2.MustSet(ctx, KeyOAuth2GrantJWTClientAuthOptional, true)
 	p2.MustSet(ctx, KeyOAuth2GrantJWTMaxDuration, "24h")
@@ -497,7 +519,7 @@ func TestJWTBearer(t *testing.T) {
 func TestJWTScopeClaimStrategy(t *testing.T) {
 	l := logrusx.New("", "")
 	l.Logrus().SetOutput(io.Discard)
-	p := MustNew(context.Background(), l)
+	p := MustNew(t, l)
 
 	ctx := context.Background()
 
@@ -508,4 +530,24 @@ func TestJWTScopeClaimStrategy(t *testing.T) {
 	assert.Equal(t, jwt.JWTScopeFieldString, p.GetJWTScopeField(ctx))
 	p.MustSet(ctx, KeyJWTScopeClaimStrategy, "both")
 	assert.Equal(t, jwt.JWTScopeFieldBoth, p.GetJWTScopeField(ctx))
+}
+
+func TestDeviceUserCode(t *testing.T) {
+	l := logrusx.New("", "")
+
+	t.Run("preset", func(t *testing.T) {
+		p := MustNew(t, l, configx.WithValue(KeyDeviceAuthUserCodeEntropyPreset, "low"))
+		assert.Equal(t, 9, p.GetUserCodeLength(t.Context()))
+		assert.Equal(t, string(randx.Numeric), string(p.GetUserCodeSymbols(t.Context())))
+	})
+
+	t.Run("explicit values", func(t *testing.T) {
+		length, charSet := 15, "foobarbaz1234"
+		p := MustNew(t, l, configx.WithValues(map[string]any{
+			KeyDeviceAuthUserCodeLength:       length,
+			KeyDeviceAuthUserCodeCharacterSet: charSet,
+		}))
+		assert.Equal(t, length, p.GetUserCodeLength(t.Context()))
+		assert.Equal(t, charSet, string(p.GetUserCodeSymbols(t.Context())))
+	})
 }

@@ -7,20 +7,18 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ory/hydra/v2/client"
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/oauth2"
-	"github.com/ory/hydra/v2/x"
-
 	"github.com/gobwas/glob"
 	"github.com/rs/cors"
 
-	"github.com/ory/fosite"
+	"github.com/ory/hydra/v2/client"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/x/logrusx"
 )
 
 func Middleware(
 	reg interface {
-		x.RegistryLogger
+		logrusx.Provider
 		oauth2.Registry
 		client.Registry
 	}) func(h http.Handler) http.Handler {
@@ -28,7 +26,7 @@ func Middleware(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			opts, enabled := reg.Config().CORS(ctx, config.PublicInterface)
+			opts, enabled := reg.Config().CORSPublic(ctx)
 			if !enabled {
 				reg.Logger().Debug("not enhancing CORS per client, as CORS is disabled")
 				h.ServeHTTP(w, r)

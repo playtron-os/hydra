@@ -10,7 +10,7 @@
 - [FAQ](#faq)
 - [How can I contribute?](#how-can-i-contribute)
 - [Communication](#communication)
-- [Contribute examples](#contribute-examples)
+- [Contribute examples or community projects](#contribute-examples-or-community-projects)
 - [Contribute code](#contribute-code)
 - [Contribute documentation](#contribute-documentation)
 - [Disclosing vulnerabilities](#disclosing-vulnerabilities)
@@ -24,7 +24,7 @@
 
 _Please note_: We take Ory Hydra's security and our users' trust very seriously.
 If you believe you have found a security issue in Ory Hydra, please disclose it
-by contacting us at security@ory.sh.
+by contacting us at security@ory.com.
 
 There are many ways in which you can contribute. The goal of this document is to
 provide a high-level overview of how you can get involved in Ory.
@@ -42,7 +42,7 @@ That said, if you want to ensure that a pull request is likely to be merged,
 talk to us! You can find out our thoughts and ensure that your contribution
 won't clash with Ory Hydra's direction. A great way to do this is via
 [Ory Hydra Discussions](https://github.com/ory/hydra/discussions) or the
-[Ory Chat](https://www.ory.sh/chat).
+[Ory Chat](https://www.ory.com/chat).
 
 ## FAQ
 
@@ -64,7 +64,7 @@ won't clash with Ory Hydra's direction. A great way to do this is via
   [a Contributors License Agreement?](https://cla-assistant.io/ory/hydra)
 
 - I would like updates about new versions of Ory Hydra.
-  [How are new releases announced?](https://www.ory.sh/l/sign-up-newsletter)
+  [How are new releases announced?](https://www.ory.com/l/sign-up-newsletter)
 
 ## How can I contribute?
 
@@ -106,7 +106,7 @@ to help out:
 
 ## Communication
 
-We use [Slack](https://www.ory.sh/chat). You are welcome to drop in and ask
+We use [Slack](https://www.ory.com/chat). You are welcome to drop in and ask
 questions, discuss bugs and feature requests, talk to other users of Ory, etc.
 
 Check out [Ory Hydra Discussions](https://github.com/ory/hydra/discussions).
@@ -115,7 +115,7 @@ and similar data.
 
 You can also join our community calls if you want to speak to the Ory team
 directly or ask some questions. You can find more info and participate in
-[Slack](https://www.ory.sh/chat) in the #community-call channel.
+[Slack](https://www.ory.com/chat) in the #community-call channel.
 
 If you want to receive regular notifications about updates to Ory Hydra,
 consider joining the mailing list. We will _only_ send you vital information on
@@ -123,41 +123,37 @@ the projects that you are interested in.
 
 Also, [follow us on Twitter](https://twitter.com/orycorp).
 
-## Contribute examples
+## Contribute examples or community projects
 
-One of the most impactful ways to contribute is by adding examples. You can find
-an overview of examples using Ory services on the
-[documentation examples page](https://www.ory.sh/docs/examples). Source code for
-examples can be found in most cases in the
-[ory/examples](https://github.com/ory/examples) repository.
+One of the most impactful ways to contribute is by adding code examples or other
+Ory-related code. You can find an overview of community code in the
+[awesome-ory](https://github.com/ory/awesome-ory) repository.
 
 _If you would like to contribute a new example, we would love to hear from you!_
 
-Please [open an issue](https://github.com/ory/examples/issues/new/choose) to
-describe your example before you start working on it. We would love to provide
-guidance to make for a pleasant contribution experience. Go through this
-checklist to contribute an example:
-
-1. Create a GitHub issue proposing a new example and make sure it's different
-   from an existing one.
-1. Fork the repo and create a feature branch off of `master` so that changes do
-   not get mixed up.
-1. Add a descriptive prefix to commits. This ensures a uniform commit history
-   and helps structure the changelog. Please refer to this
-   [Convential Commits configuration](https://github.com/ory/hydra/blob/master/.github/workflows/conventional_commits.yml)
-   for the list of accepted prefixes. You can read more about the Conventional
-   Commit specification
-   [at their site](https://www.conventionalcommits.org/en/v1.0.0/).
-1. Create a `README.md` that explains how to use the example. (Use
-   [the README template](https://github.com/ory/examples/blob/master/_common/README.md)).
-1. Open a pull request and maintainers will review and merge your example.
+Please [open a pull request at awesome-ory](https://github.com/ory/awesome-ory/)
+to add your example or Ory-related project to the awesome-ory README.
 
 ## Contribute code
 
-Unless you are fixing a known bug, we **strongly** recommend discussing it with
-the core team via a GitHub issue or [in our chat](https://www.ory.sh/chat)
-before getting started to ensure your work is consistent with Ory Hydra's
-roadmap and architecture.
+**All code contributions require prior discussion and agreement with maintainers
+before opening a pull request.**
+
+This applies to bug fixes, new features, and refactoring. Before writing code:
+
+1. Open a [Discussion](https://github.com/ory/hydra/discussions/new/choose) or
+   [Issue](https://github.com/ory/hydra/issues/new/choose) describing the
+   problem and your proposed solution.
+2. Wait for maintainer feedback and explicit agreement on the implementation
+   approach.
+3. Only then begin writing code.
+
+Pull requests without prior discussion may be closed without review. This policy
+exists to protect your time and maintainer time.
+
+"Drive-by" PRs, even well-intentioned ones, often conflict with the project
+roadmap, duplicate ongoing work, or introduce architectural inconsistencies. A
+quick conversation can help avoid these problems.
 
 All contributions are made via pull requests. To make a pull request, you will
 need a GitHub account; if you are unclear on this process, see GitHub's
@@ -213,6 +209,34 @@ you should change the status to "Ready for review" and
 
 Reviewers will approve the pull request once they are satisfied with the patch.
 
+### AI-assisted contributions
+
+AI can be a valuable aid for writing code, documentation, and tests. However, to
+maintain the quality and reliability of Ory Hydra, please follow these
+guidelines:
+
+- When submitting a pull request or issue that involved AI assistance, mention
+  the tools you used and the extent of their involvement. This helps reviewers
+  understand the context of your contribution.
+
+- Pull requests created with AI assistance should address an existing, accepted
+  issue. If you have an idea for a new feature or improvement, please open a
+  discussion or issue first to ensure alignment with the project's direction
+  before investing time in implementation.
+
+- You must use AI responsibly when writing code. All contributions must be
+  tested and verified before submission. Unreviewed AI-generated code will not
+  be accepted, and repeated submissions of this nature may result in restricted
+  contribution privileges.
+
+- When using AI to help draft issues, discussions, or documentation, review and
+  edit the output before submitting. AI tends to be verbose. Trim unnecessary
+  content and ensure your submission is clear and focused.
+
+Contributors must use AI responsibly. These guidelines exist to ensure that
+every contribution meets the high standards our community expects, while still
+embracing the productivity benefits that AI tools can provide.
+
 ## Contribute documentation
 
 Please provide documentation when changing, removing, or adding features. All
@@ -224,7 +248,7 @@ instructions please head over to the Ory Documentation
 ## Disclosing vulnerabilities
 
 Please disclose vulnerabilities exclusively to
-[security@ory.sh](mailto:security@ory.sh). Do not use GitHub issues.
+[security@ory.com](mailto:security@ory.com). Do not use GitHub issues.
 
 ## Code style
 
@@ -266,4 +290,4 @@ community a safe place for you and we've got your back.
 
 We welcome discussion about creating a welcoming, safe, and productive
 environment for the community. If you have any questions, feedback, or concerns
-[please let us know](https://www.ory.sh/chat).
+[please let us know](https://www.ory.com/chat).

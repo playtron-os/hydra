@@ -5,9 +5,9 @@ package cmd_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,29 +17,27 @@ import (
 	hydra "github.com/ory/hydra-client-go/v2"
 	"github.com/ory/hydra/v2/cmd"
 	"github.com/ory/x/cmdx"
-	"github.com/ory/x/pointerx"
 	"github.com/ory/x/snapshotx"
 )
 
 func writeTempFile(t *testing.T, contents interface{}) string {
 	t.Helper()
-	ij, err := json.Marshal(contents)
+	fn := filepath.Join(t.TempDir(), "content.json")
+	f, err := os.Create(fn)
 	require.NoError(t, err)
-	f, err := os.CreateTemp(t.TempDir(), "")
-	require.NoError(t, err)
-	_, err = f.Write(ij)
-	require.NoError(t, err)
+	require.NoError(t, json.NewEncoder(f).Encode(contents))
 	require.NoError(t, f.Close())
-	return f.Name()
+	return fn
 }
 
 func TestImportClient(t *testing.T) {
-	ctx := context.Background()
+	t.Context()
+
 	c := cmd.NewImportClientCmd()
 	reg := setup(t, c)
 
-	file1 := writeTempFile(t, []hydra.OAuth2Client{{Scope: pointerx.String("foo")}, {Scope: pointerx.String("bar"), ClientSecret: pointerx.String("some-secret")}})
-	file2 := writeTempFile(t, []hydra.OAuth2Client{{Scope: pointerx.String("baz")}, {Scope: pointerx.String("zab"), ClientSecret: pointerx.String("some-secret")}})
+	file1 := writeTempFile(t, []hydra.OAuth2Client{{Scope: new("foo")}, {Scope: new("bar"), ClientSecret: new("some-secret")}})
+	file2 := writeTempFile(t, []hydra.OAuth2Client{{Scope: new("baz")}, {Scope: new("zab"), ClientSecret: new("some-secret")}})
 
 	t.Run("case=imports clients from single file", func(t *testing.T) {
 		actual := gjson.Parse(cmdx.ExecNoErr(t, c, file1))
@@ -48,10 +46,10 @@ func TestImportClient(t *testing.T) {
 		assert.NotEmpty(t, actual.Get("0.client_secret").String())
 		assert.Equal(t, "some-secret", actual.Get("1.client_secret").String())
 
-		_, err := reg.ClientManager().GetClient(ctx, actual.Get("0.client_id").String())
+		_, err := reg.ClientManager().GetClient(t.Context(), actual.Get("0.client_id").String())
 		require.NoError(t, err)
 
-		_, err = reg.ClientManager().GetClient(ctx, actual.Get("1.client_id").String())
+		_, err = reg.ClientManager().GetClient(t.Context(), actual.Get("1.client_id").String())
 		require.NoError(t, err)
 
 		snapshotx.SnapshotT(t, json.RawMessage(actual.Raw), snapshotExcludedClientFields...)
@@ -77,7 +75,7 @@ func TestImportClient(t *testing.T) {
 
 	t.Run("case=imports clients from multiple files and stdin", func(t *testing.T) {
 		var stdin bytes.Buffer
-		require.NoError(t, json.NewEncoder(&stdin).Encode([]hydra.OAuth2Client{{Scope: pointerx.String("oof")}, {Scope: pointerx.String("rab"), ClientSecret: pointerx.String("some-secret")}}))
+		require.NoError(t, json.NewEncoder(&stdin).Encode([]hydra.OAuth2Client{{Scope: new("oof")}, {Scope: new("rab"), ClientSecret: new("some-secret")}}))
 
 		stdout, _, err := cmdx.Exec(t, c, &stdin, file1, file2)
 		require.NoError(t, err)
@@ -93,7 +91,7 @@ func TestImportClient(t *testing.T) {
 	})
 
 	t.Run("case=performs appropriate error reporting", func(t *testing.T) {
-		file3 := writeTempFile(t, []hydra.OAuth2Client{{ClientSecret: pointerx.String("short")}})
+		file3 := writeTempFile(t, []hydra.OAuth2Client{{ClientSecret: new("short")}})
 		stdout, stderr, err := cmdx.Exec(t, c, nil, file1, file3)
 		require.Error(t, err)
 		actual := gjson.Parse(stdout)

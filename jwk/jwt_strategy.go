@@ -7,40 +7,41 @@ import (
 	"context"
 	"net"
 
-	"github.com/ory/x/josex"
-
 	"github.com/go-jose/go-jose/v3"
-	"github.com/gofrs/uuid"
-
-	"github.com/ory/fosite"
-	"github.com/ory/hydra/v2/driver/config"
-
 	"github.com/pkg/errors"
 
-	"github.com/ory/fosite/token/jwt"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
+	"github.com/ory/x/josex"
 )
 
-type JWTSigner interface {
-	GetPublicKeyID(ctx context.Context) (string, error)
-	GetPublicKey(ctx context.Context) (jose.JSONWebKey, error)
-	jwt.Signer
-}
+type (
+	JWTSigner interface {
+		GetPublicKeyID(ctx context.Context) (string, error)
+		GetPublicKey(ctx context.Context) (jose.JSONWebKey, error)
+		jwt.Signer
+	}
+	DefaultJWTSigner struct {
+		*jwt.DefaultSigner
+		r     InternalRegistry
+		setID string
+	}
+	AccessTokenSignerProvider interface {
+		AccessTokenJWTSigner() JWTSigner
+	}
+	OpenIDSignerProvider interface {
+		OpenIDJWTSigner() JWTSigner
+	}
+)
 
-type DefaultJWTSigner struct {
-	*jwt.DefaultSigner
-	r     InternalRegistry
-	c     *config.DefaultProvider
-	setID string
-}
-
-func NewDefaultJWTSigner(c *config.DefaultProvider, r InternalRegistry, setID string) *DefaultJWTSigner {
-	j := &DefaultJWTSigner{c: c, r: r, setID: setID, DefaultSigner: &jwt.DefaultSigner{}}
+func NewDefaultJWTSigner(r InternalRegistry, setID string) *DefaultJWTSigner {
+	j := &DefaultJWTSigner{r: r, setID: setID, DefaultSigner: &jwt.DefaultSigner{}}
 	j.DefaultSigner.GetPrivateKey = j.getPrivateKey
 	return j
 }
 
 func (j *DefaultJWTSigner) getKeys(ctx context.Context) (private *jose.JSONWebKey, err error) {
-	private, err = GetOrGenerateKeys(ctx, j.r, j.r.KeyManager(), j.setID, uuid.Must(uuid.NewV4()).String(), string(jose.RS256))
+	private, err = GetOrGenerateKeys(ctx, j.r, j.setID, string(jose.RS256))
 	if err == nil {
 		return private, nil
 	}
@@ -53,7 +54,7 @@ func (j *DefaultJWTSigner) getKeys(ctx context.Context) (private *jose.JSONWebKe
 
 	return nil, errors.WithStack(fosite.ErrServerError.
 		WithWrap(err).
-		WithHintf(`Could not ensure that signing keys for "%s" exists. If you are running against a persistent SQL database this is most likely because your "secrets.system" ("SECRETS_SYSTEM" environment variable) is not set or changed. When running with an SQL database backend you need to make sure that the secret is set and stays the same, unless when doing key rotation. This may also happen when you forget to run "hydra migrate sql..`, j.setID))
+		WithHintf(`Could not ensure that signing keys for "%s" exists. If you are running against a persistent SQL database this is most likely because your "secrets.system" ("SECRETS_SYSTEM" environment variable) is not set or changed. When running with an SQL database backend you need to make sure that the secret is set and stays the same, unless when doing key rotation. This may also happen when you forget to run "hydra migrate sql up -e".`, j.setID))
 }
 
 func (j *DefaultJWTSigner) GetPublicKeyID(ctx context.Context) (string, error) {
@@ -72,11 +73,6 @@ func (j *DefaultJWTSigner) GetPublicKey(ctx context.Context) (jose.JSONWebKey, e
 	return josex.ToPublicKey(private), nil
 }
 
-func (j *DefaultJWTSigner) getPrivateKey(ctx context.Context) (interface{}, error) {
-	private, err := j.getKeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return private, nil
+func (j *DefaultJWTSigner) getPrivateKey(ctx context.Context) (any, error) {
+	return j.getKeys(ctx)
 }

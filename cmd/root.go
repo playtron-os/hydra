@@ -7,26 +7,26 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pkg/errors"
+
 	"github.com/ory/x/cmdx"
 
-	"github.com/ory/hydra/v2/driver"
-	"github.com/ory/x/configx"
-	"github.com/ory/x/servicelocatorx"
-
 	"github.com/spf13/cobra"
+
+	"github.com/ory/hydra/v2/driver"
 )
 
-func NewRootCmd(slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) *cobra.Command {
+func NewRootCmd(opts ...driver.OptionsModifier) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hydra",
 		Short: "Run and manage Ory Hydra",
 	}
 	cmdx.EnableUsageTemplating(cmd)
-	RegisterCommandRecursive(cmd, slOpts, dOpts, cOpts)
+	RegisterCommandRecursive(cmd, opts...)
 	return cmd
 }
 
-func RegisterCommandRecursive(parent *cobra.Command, slOpts []servicelocatorx.Option, dOpts []driver.OptionsModifier, cOpts []configx.OptionModifier) {
+func RegisterCommandRecursive(parent *cobra.Command, opts ...driver.OptionsModifier) {
 	createCmd := NewCreateCmd()
 	createCmd.AddCommand(
 		NewCreateClientsCommand(),
@@ -62,6 +62,7 @@ func RegisterCommandRecursive(parent *cobra.Command, slOpts []servicelocatorx.Op
 	performCmd.AddCommand(
 		NewPerformClientCredentialsCmd(),
 		NewPerformAuthorizationCodeCmd(),
+		NewPerformDeviceCodeCmd(),
 	)
 
 	revokeCmd := NewRevokeCmd()
@@ -71,14 +72,13 @@ func RegisterCommandRecursive(parent *cobra.Command, slOpts []servicelocatorx.Op
 	introspectCmd.AddCommand(NewIntrospectTokenCmd())
 
 	migrateCmd := NewMigrateCmd()
-	migrateCmd.AddCommand(NewMigrateGenCmd())
-	migrateCmd.AddCommand(NewMigrateSqlCmd(slOpts, dOpts, cOpts))
-	migrateCmd.AddCommand(NewMigrateStatusCmd(slOpts, dOpts, cOpts))
+	migrateCmd.AddCommand(NewMigrateSQLCmd(opts))
+	migrateCmd.AddCommand(NewMigrateStatusCmd(opts))
 
 	serveCmd := NewServeCmd()
-	serveCmd.AddCommand(NewServeAdminCmd(slOpts, dOpts, cOpts))
-	serveCmd.AddCommand(NewServePublicCmd(slOpts, dOpts, cOpts))
-	serveCmd.AddCommand(NewServeAllCmd(slOpts, dOpts, cOpts))
+	serveCmd.AddCommand(NewServeAdminCmd(opts))
+	serveCmd.AddCommand(NewServePublicCmd(opts))
+	serveCmd.AddCommand(NewServeAllCmd(opts))
 
 	parent.AddCommand(
 		createCmd,
@@ -92,15 +92,18 @@ func RegisterCommandRecursive(parent *cobra.Command, slOpts []servicelocatorx.Op
 		revokeCmd,
 		migrateCmd,
 		serveCmd,
-		NewJanitorCmd(slOpts, dOpts, cOpts),
+		NewJanitorCmd(opts),
 		NewVersionCmd(),
 	)
 }
 
 // Execute adds all child commands to the root command sets flags appropriately.
 func Execute() {
-	if err := NewRootCmd(nil, nil, nil).Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(-1)
+	c := NewRootCmd()
+	if err := c.Execute(); err != nil {
+		if !errors.Is(err, cmdx.ErrNoPrintButFail) {
+			_, _ = fmt.Fprintln(c.ErrOrStderr(), err)
+		}
+		os.Exit(1)
 	}
 }

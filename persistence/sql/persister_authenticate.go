@@ -3,8 +3,15 @@
 
 package sql
 
-import "context"
+import (
+	"context"
+)
 
-func (p *Persister) Authenticate(ctx context.Context, name, secret string) error {
-	return p.r.Kratos().Authenticate(ctx, name, secret)
+// Authenticate implements ResourceOwnerPasswordCredentialsGrantStorage.
+func (p *Persister) Authenticate(ctx context.Context, name, secret string) (subject string, err error) {
+	session, err := p.r.Kratos().Authenticate(ctx, name, secret)
+	if err != nil {
+		return "", err
+	}
+	return session.Identity.Id, nil
 }

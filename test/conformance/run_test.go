@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //go:build conformity
-// +build conformity
 
 package main
 
@@ -17,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,8 +25,6 @@ import (
 	hydrac "github.com/ory/hydra-client-go/v2"
 
 	"github.com/ory/x/httpx"
-
-	"github.com/ory/x/stringslice"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -180,8 +178,10 @@ func TestPlans(t *testing.T) {
 
 func makePost(t *testing.T, href string, payload io.Reader, esc int) []byte {
 	res, err := httpClient.Post(href, "application/json", payload)
-	require.NoError(t, err)
-	defer res.Body.Close()
+	if err != nil {
+		require.FailNowf(t, "Failed to make POST request. Check that the server is live and that the certificate in test/conformance/ssl is not expired.", "Error: %s\nURL: %s", err, href)
+	}
+	defer res.Body.Close() //nolint:errcheck
 	body, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.Equal(t, esc, res.StatusCode, "%s\n%s", href, body)
@@ -190,14 +190,14 @@ func makePost(t *testing.T, href string, payload io.Reader, esc int) []byte {
 
 func createPlan(t *testing.T, extra url.Values, isParallel bool) {
 	planName := extra.Get("planName")
-	if stringslice.Has(skipWhenShort, planName) && testing.Short() {
+	if slices.Contains(skipWhenShort, planName) && testing.Short() {
 		t.Skipf("Skipping test plan '%s' because short tests", planName)
 		return
 	}
 
 	// https://localhost:8443/api/plan?planName=oidcc-formpost-basic-certification-test-plan&variant={"server_metadata":"discovery","client_registration":"dynamic_client"}&variant={"server_metadata":"discovery","client_registration":"dynamic_client"}
-	//planConfig, err := sjson.SetBytes(config, "alias", uuid.New())
-	//require.NoError(t, err)
+	// planConfig, err := sjson.SetBytes(config, "alias", uuid.New())
+	// require.NoError(t, err)
 	body := makePost(t, urlx.CopyWithQuery(urlx.AppendPaths(server, "/api/plan"), extra).String(),
 		bytes.NewReader(config),
 		201)
@@ -297,7 +297,7 @@ func createPlan(t *testing.T, extra url.Values, isParallel bool) {
 func checkStatus(t *testing.T, testID string) (string, status) {
 	res, err := httpClient.Get(urlx.AppendPaths(server, "/api/info", testID).String())
 	require.NoError(t, err)
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	body, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
 	require.Equal(t, 200, res.StatusCode, "%s", body)

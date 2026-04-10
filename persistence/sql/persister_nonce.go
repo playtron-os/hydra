@@ -7,15 +7,20 @@ import (
 	"context"
 	"time"
 
-	"github.com/ory/fosite"
+	"github.com/pkg/errors"
+
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/handler/verifiable"
 	"github.com/ory/hydra/v2/x"
-	"github.com/ory/x/errorsx"
 	"github.com/ory/x/otelx"
 )
+
+var _ verifiable.NonceManager = (*Persister)(nil)
 
 // Set the aadAccessTokenPrefix to something unique to avoid ciphertext confusion with other usages of the AEAD cipher.
 var aadAccessTokenPrefix = "vc-nonce-at:" // nolint:gosec
 
+// NewNonce implements NonceManager.
 func (p *Persister) NewNonce(ctx context.Context, accessToken string, expiresIn time.Time) (res string, err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.NewNonce")
 	defer otelx.End(span, &err)
@@ -26,6 +31,7 @@ func (p *Persister) NewNonce(ctx context.Context, accessToken string, expiresIn 
 	return p.r.FlowCipher().Encrypt(ctx, plaintext, aad)
 }
 
+// IsNonceValid implements NonceManager.
 func (p *Persister) IsNonceValid(ctx context.Context, accessToken, nonce string) (err error) {
 	ctx, span := p.r.Tracer(ctx).Tracer().Start(ctx, "persistence.sql.IsNonceValid")
 	defer otelx.End(span, &err)
@@ -33,16 +39,16 @@ func (p *Persister) IsNonceValid(ctx context.Context, accessToken, nonce string)
 	aad := []byte(aadAccessTokenPrefix + accessToken)
 	plaintext, err := p.r.FlowCipher().Decrypt(ctx, nonce, aad)
 	if err != nil {
-		return errorsx.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce is invalid."))
+		return errors.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce is invalid."))
 	}
 
 	exp, err := x.BytesToInt(plaintext)
 	if err != nil {
-		return errorsx.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce is invalid.")) // should never happen
+		return errors.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce is invalid.")) // should never happen
 	}
 
 	if exp < time.Now().Unix() {
-		return errorsx.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce has expired."))
+		return errors.WithStack(fosite.ErrInvalidRequest.WithHintf("The nonce has expired."))
 	}
 
 	return nil

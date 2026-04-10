@@ -4,67 +4,65 @@
 package driver
 
 import (
-	"github.com/pkg/errors"
-	"go.opentelemetry.io/otel/trace"
-
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/hydra/v2/consent"
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/fositex"
-	"github.com/ory/hydra/v2/hsm"
-	"github.com/ory/hydra/v2/internal/kratos"
-	"github.com/ory/x/contextx"
-	"github.com/ory/x/logrusx"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/handler/oauth2"
+	"github.com/ory/hydra/v2/jwk"
 )
 
-// WritableRegistry is a deprecated interface that should not be used anymore.
-//
-// Deprecate this at some point.
-type WritableRegistry interface {
-	// WithBuildInfo(v, h, d string) Registry
-
-	WithConfig(c *config.DefaultProvider) Registry
-	WithContextualizer(ctxer contextx.Contextualizer) Registry
-	WithLogger(l *logrusx.Logger) Registry
-	WithTracer(t trace.Tracer) Registry
-	WithTracerWrapper(TracerWrapper) Registry
-	WithKratos(k kratos.Client) Registry
-	WithExtraFositeFactories(f []fositex.Factory) Registry
-	ExtraFositeFactories() []fositex.Factory
-	WithOAuth2Provider(f fosite.OAuth2Provider)
-	WithConsentStrategy(c consent.Strategy)
-	WithHsmContext(h hsm.Context)
-}
-
-type RegistryModifier func(r Registry) error
+type RegistryModifier func(r *RegistrySQL) error
 
 func WithRegistryModifiers(f ...RegistryModifier) OptionsModifier {
-	return func(o *Options) {
-		o.registryModifiers = f
+	return func(o *options) {
+		o.registryModifiers = append(o.registryModifiers, f...)
 	}
 }
 
-func RegistryWithHMACSHAStrategy(s func(r Registry) oauth2.CoreStrategy) RegistryModifier {
-	return func(r Registry) error {
-		switch rt := r.(type) {
-		case *RegistrySQL:
-			rt.hmacs = s(r)
-		default:
-			return errors.Errorf("unable to set HMAC strategy on registry of type %T", r)
-		}
+func RegistryWithHMACSHAStrategy(s func(r *RegistrySQL) oauth2.CoreStrategy) RegistryModifier {
+	return func(r *RegistrySQL) error {
+		r.hmacs = s(r)
 		return nil
 	}
 }
 
-func RegistryWithHsmContext(h hsm.Context) RegistryModifier {
-	return func(r Registry) error {
-		switch rt := r.(type) {
-		case *RegistrySQL:
-			rt.hsm = h
-		default:
-			return errors.Errorf("unable to set HMAC strategy on registry of type %T", r)
-		}
+func RegistryWithJWTStrategy(s func(r *RegistrySQL) oauth2.AccessTokenStrategy) RegistryModifier {
+	return func(r *RegistrySQL) error {
+		r.jwtStrategy = s(r)
 		return nil
+	}
+}
+
+func RegistryWithKeyManager(km func(r *RegistrySQL) (jwk.Manager, error)) RegistryModifier {
+	return func(r *RegistrySQL) (err error) {
+		r.keyManager, err = km(r)
+		return err
+	}
+}
+
+func RegistryWithOAuth2Provider(pr func(r *RegistrySQL) fosite.OAuth2Provider) RegistryModifier {
+	return func(r *RegistrySQL) error {
+		r.fop = pr(r)
+		return nil
+	}
+}
+
+func RegistryWithAccessTokenStorage(s func(r *RegistrySQL) oauth2.AccessTokenStorage) RegistryModifier {
+	return func(r *RegistrySQL) error {
+		r.accessTokenStorage = s(r)
+		return nil
+	}
+}
+
+func RegistryWithAuthorizeCodeStorage(s func(r *RegistrySQL) oauth2.AuthorizeCodeStorage) RegistryModifier {
+	return func(r *RegistrySQL) error {
+		r.authorizeCodeStorage = s(r)
+		return nil
+	}
+}
+
+func RegistryWithConsentManager(cm func(r *RegistrySQL) (consent.Manager, error)) RegistryModifier {
+	return func(r *RegistrySQL) (err error) {
+		r.consentManager, err = cm(r)
+		return err
 	}
 }

@@ -9,8 +9,13 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/ory/pop/v6"
+
 	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/fosite"
 	"github.com/ory/hydra/v2/fositex"
+	"github.com/ory/hydra/v2/hsm"
+	"github.com/ory/hydra/v2/internal/kratos"
 	"github.com/ory/x/configx"
 	"github.com/ory/x/logrusx"
 	"github.com/ory/x/otelx"
@@ -19,46 +24,47 @@ import (
 )
 
 type (
-	Options struct {
-		preload  bool
-		validate bool
-		opts     []configx.OptionModifier
-		config   *config.DefaultProvider
-		// The first default refers to determining the NID at startup; the second default referes to the fact that the Contextualizer may dynamically change the NID.
-		skipNetworkInit   bool
-		tracerWrapper     TracerWrapper
-		extraMigrations   []fs.FS
-		goMigrations      []popx.Migration
-		fositexFactories  []fositex.Factory
-		registryModifiers []RegistryModifier
-		inspect           func(Registry) error
+	options struct {
+		noPreload,
+		noValidate,
+		autoMigrate,
+		skipNetworkInit bool
+		configOpts         []configx.OptionModifier
+		tracerWrapper      TracerWrapper
+		extraMigrations    []fs.FS
+		goMigrations       []popx.Migration
+		fositexFactories   []fositex.Factory
+		registryModifiers  []RegistryModifier
+		inspect            func(*RegistrySQL) error
+		serviceLocatorOpts []servicelocatorx.Option
+		hsmContext         hsm.Context
+		kratos             kratos.Client
+		fop                fosite.OAuth2Provider
+		dbOptsModifier     []func(details *pop.ConnectionDetails)
 	}
-	OptionsModifier func(*Options)
+	OptionsModifier func(*options)
 
 	TracerWrapper func(*otelx.Tracer) *otelx.Tracer
 )
 
-func NewOptions(opts []OptionsModifier) *Options {
-	o := &Options{
-		validate: true,
-		preload:  true,
-		opts:     []configx.OptionModifier{},
-	}
+func newOptions(opts []OptionsModifier) *options {
+	o := &options{}
 	for _, f := range opts {
 		f(o)
 	}
 	return o
 }
 
-func WithConfig(config *config.DefaultProvider) OptionsModifier {
-	return func(o *Options) {
-		o.config = config
+func WithConfigOptions(opts ...configx.OptionModifier) OptionsModifier {
+	return func(o *options) {
+		o.configOpts = append(o.configOpts, opts...)
 	}
 }
 
-func WithOptions(opts ...configx.OptionModifier) OptionsModifier {
-	return func(o *Options) {
-		o.opts = append(o.opts, opts...)
+// WithDBOptionsModifier modifies the pop connection details before the connection is opened.
+func WithDBOptionsModifier(f ...func(details *pop.ConnectionDetails)) OptionsModifier {
+	return func(o *options) {
+		o.dbOptsModifier = append(o.dbOptsModifier, f...)
 	}
 }
 
@@ -66,92 +72,126 @@ func WithOptions(opts ...configx.OptionModifier) OptionsModifier {
 //
 // This does not affect schema validation!
 func DisableValidation() OptionsModifier {
-	return func(o *Options) {
-		o.validate = false
+	return func(o *options) {
+		o.noValidate = true
 	}
 }
 
 // DisablePreloading will not preload the config.
 func DisablePreloading() OptionsModifier {
-	return func(o *Options) {
-		o.preload = false
+	return func(o *options) {
+		o.noPreload = true
 	}
 }
 
 func SkipNetworkInit() OptionsModifier {
-	return func(o *Options) {
+	return func(o *options) {
 		o.skipNetworkInit = true
 	}
 }
 
 // WithTracerWrapper sets a function that wraps the tracer.
 func WithTracerWrapper(wrapper TracerWrapper) OptionsModifier {
-	return func(o *Options) {
+	return func(o *options) {
 		o.tracerWrapper = wrapper
 	}
 }
 
 // WithExtraMigrations specifies additional database migration.
 func WithExtraMigrations(m ...fs.FS) OptionsModifier {
-	return func(o *Options) {
+	return func(o *options) {
 		o.extraMigrations = append(o.extraMigrations, m...)
 	}
 }
 
 func WithGoMigrations(m ...popx.Migration) OptionsModifier {
-	return func(o *Options) {
+	return func(o *options) {
 		o.goMigrations = append(o.goMigrations, m...)
 	}
 }
 
 func WithExtraFositeFactories(f ...fositex.Factory) OptionsModifier {
-	return func(o *Options) {
+	return func(o *options) {
 		o.fositexFactories = append(o.fositexFactories, f...)
 	}
 }
 
-func Inspect(f func(Registry) error) OptionsModifier {
-	return func(o *Options) {
+func Inspect(f func(*RegistrySQL) error) OptionsModifier {
+	return func(o *options) {
 		o.inspect = f
 	}
 }
 
-func New(ctx context.Context, sl *servicelocatorx.Options, opts []OptionsModifier) (Registry, error) {
-	o := NewOptions(opts)
+func WithServiceLocatorOptions(opts ...servicelocatorx.Option) OptionsModifier {
+	return func(o *options) {
+		o.serviceLocatorOpts = append(o.serviceLocatorOpts, opts...)
+	}
+}
+
+func WithAutoMigrate() OptionsModifier {
+	return func(o *options) {
+		o.autoMigrate = true
+	}
+}
+
+func WithHSMContext(h hsm.Context) OptionsModifier {
+	return func(o *options) {
+		o.hsmContext = h
+	}
+}
+
+func WithKratosClient(k kratos.Client) OptionsModifier {
+	return func(o *options) {
+		o.kratos = k
+	}
+}
+
+func WithOAuth2Provider(p fosite.OAuth2Provider) OptionsModifier {
+	return func(o *options) {
+		o.fop = p
+	}
+}
+
+func New(ctx context.Context, opts ...OptionsModifier) (*RegistrySQL, error) {
+	o := newOptions(opts)
+	sl := servicelocatorx.NewOptions(o.serviceLocatorOpts...)
 
 	l := sl.Logger()
 	if l == nil {
 		l = logrusx.New("Ory Hydra", config.Version)
 	}
 
-	ctxter := sl.Contextualizer()
-	c := o.config
-	if c == nil {
-		var err error
-		c, err = config.New(ctx, l, o.opts...)
-		if err != nil {
-			l.WithError(err).Error("Unable to instantiate configuration.")
-			return nil, err
-		}
+	c, err := config.New(ctx, l, sl.Contextualizer(), o.configOpts...)
+	if err != nil {
+		l.WithError(err).Error("Unable to instantiate configuration.")
+		return nil, err
 	}
 
-	if o.validate {
+	if !o.noValidate {
 		if err := config.Validate(ctx, l, c); err != nil {
 			return nil, err
 		}
 	}
 
-	r, err := NewRegistryWithoutInit(c, l)
+	r, err := newRegistryWithoutInit(c, l)
 	if err != nil {
 		l.WithError(err).Error("Unable to create service registry.")
 		return nil, err
 	}
 
-	if o.tracerWrapper != nil {
-		r.WithTracerWrapper(o.tracerWrapper)
-	}
+	r.tracerWrapper = o.tracerWrapper
+	r.fositeFactories = o.fositexFactories
+	r.hsm = o.hsmContext
+	r.middlewares = sl.HTTPMiddlewares()
+	r.ctxer = sl.Contextualizer()
+	r.kratos = o.kratos
+	r.fop = o.fop
+	r.dbOptsModifier = o.dbOptsModifier
 
-	r.WithExtraFositeFactories(o.fositexFactories)
+	if err = r.Init(ctx, o.skipNetworkInit, o.autoMigrate, o.extraMigrations, o.goMigrations); err != nil {
+		l.WithError(err).Error("Unable to initialize service registry.")
+		return nil, err
+	}
 
 	for _, f := range o.registryModifiers {
 		if err := f(r); err != nil {
@@ -159,14 +199,9 @@ func New(ctx context.Context, sl *servicelocatorx.Options, opts []OptionsModifie
 		}
 	}
 
-	if err = r.Init(ctx, o.skipNetworkInit, false, ctxter, o.extraMigrations, o.goMigrations); err != nil {
-		l.WithError(err).Error("Unable to initialize service registry.")
-		return nil, err
-	}
-
 	// Avoid cold cache issues on boot:
-	if o.preload {
-		CallRegistry(ctx, r)
+	if !o.noPreload {
+		callRegistry(ctx, r)
 	}
 
 	if o.inspect != nil {

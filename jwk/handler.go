@@ -6,25 +6,17 @@ package jwk
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"sync/atomic"
 
+	"github.com/go-jose/go-jose/v3"
+	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ory/herodot"
-	"github.com/ory/x/httprouterx"
-
-	"github.com/gofrs/uuid"
-	"github.com/pkg/errors"
-
-	"github.com/ory/x/urlx"
-
-	"github.com/ory/x/errorsx"
-
-	"github.com/ory/x/stringslice"
-
 	"github.com/ory/hydra/v2/x"
-
-	jose "github.com/go-jose/go-jose/v3"
-	"github.com/julienschmidt/httprouter"
+	"github.com/ory/x/httprouterx"
+	"github.com/ory/x/urlx"
 )
 
 const (
@@ -56,20 +48,22 @@ func NewHandler(r InternalRegistry) *Handler {
 	return &Handler{r: r}
 }
 
-func (h *Handler) SetRoutes(admin *httprouterx.RouterAdmin, public *httprouterx.RouterPublic, corsMiddleware func(http.Handler) http.Handler) {
-	public.Handler("OPTIONS", WellKnownKeysPath, corsMiddleware(http.HandlerFunc(h.handleOptions)))
-	public.Handler("GET", WellKnownKeysPath, corsMiddleware(http.HandlerFunc(h.discoverJsonWebKeys)))
+func (h *Handler) SetPublicRoutes(r *httprouterx.RouterPublic, corsMiddleware func(http.Handler) http.Handler) {
+	r.Handler("OPTIONS", WellKnownKeysPath, corsMiddleware(http.HandlerFunc(h.handleOptions)))
+	r.Handler("GET", WellKnownKeysPath, corsMiddleware(http.HandlerFunc(h.discoverJsonWebKeys)))
+}
 
-	admin.GET(KeyHandlerPath+"/:set/:key", h.getJsonWebKey)
-	admin.GET(KeyHandlerPath+"/:set", h.getJsonWebKeySet)
+func (h *Handler) SetAdminRoutes(r *httprouterx.RouterAdmin) {
+	r.GET(KeyHandlerPath+"/{set}/{key}", h.getJsonWebKey)
+	r.GET(KeyHandlerPath+"/{set}", h.getJsonWebKeySet)
 
-	admin.POST(KeyHandlerPath+"/:set", h.createJsonWebKeySet)
+	r.POST(KeyHandlerPath+"/{set}", h.createJsonWebKeySet)
 
-	admin.PUT(KeyHandlerPath+"/:set/:key", h.adminUpdateJsonWebKey)
-	admin.PUT(KeyHandlerPath+"/:set", h.setJsonWebKeySet)
+	r.PUT(KeyHandlerPath+"/{set}/{key}", h.adminUpdateJsonWebKey)
+	r.PUT(KeyHandlerPath+"/{set}", h.setJsonWebKeySet)
 
-	admin.DELETE(KeyHandlerPath+"/:set/:key", h.deleteJsonWebKey)
-	admin.DELETE(KeyHandlerPath+"/:set", h.adminDeleteJsonWebKeySet)
+	r.DELETE(KeyHandlerPath+"/{set}/{key}", h.deleteJsonWebKey)
+	r.DELETE(KeyHandlerPath+"/{set}", h.adminDeleteJsonWebKeySet)
 }
 
 // swagger:route GET /.well-known/jwks.json wellknown discoverJsonWebKeys
@@ -94,24 +88,29 @@ func (h *Handler) SetRoutes(admin *httprouterx.RouterAdmin, public *httprouterx.
 //	Responses:
 //	  200: jsonWebKeySet
 //	  default: errorOAuth2
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-public-low
 func (h *Handler) discoverJsonWebKeys(w http.ResponseWriter, r *http.Request) {
 	eg, ctx := errgroup.WithContext(r.Context())
-	wellKnownKeys := stringslice.Unique(h.r.Config().WellKnownKeys(ctx))
-	keys := make(chan *jose.JSONWebKeySet, len(wellKnownKeys))
-	for _, set := range wellKnownKeys {
-		set := set
+	wellKnownKeys := h.r.Config().WellKnownKeys(ctx)
+
+	keys := make([]*jose.JSONWebKeySet, len(wellKnownKeys))
+	nTotalKeys := atomic.Int64{}
+	for i, set := range wellKnownKeys {
 		eg.Go(func() error {
 			k, err := h.r.KeyManager().GetKeySet(ctx, set)
 			if errors.Is(err, x.ErrNotFound) {
 				h.r.Logger().Warnf("JSON Web Key Set %q does not exist yet, generating new key pair...", set)
-				k, err = h.r.KeyManager().GenerateAndPersistKeySet(ctx, set, uuid.Must(uuid.NewV4()).String(), string(jose.RS256), "sig")
+				k, err = h.r.KeyManager().GenerateAndPersistKeySet(ctx, set, "", string(jose.RS256), "sig")
 				if err != nil {
 					return err
 				}
 			} else if err != nil {
 				return err
 			}
-			keys <- ExcludePrivateKeys(k)
+			keys[i] = ExcludePrivateKeys(k)
+			nTotalKeys.Add(int64(len(keys[i].Keys)))
 			return nil
 		})
 	}
@@ -119,9 +118,9 @@ func (h *Handler) discoverJsonWebKeys(w http.ResponseWriter, r *http.Request) {
 		h.r.Writer().WriteError(w, r, err)
 		return
 	}
-	close(keys)
-	var jwks jose.JSONWebKeySet
-	for k := range keys {
+
+	jwks := jose.JSONWebKeySet{Keys: make([]jose.JSONWebKey, 0, nTotalKeys.Load())}
+	for _, k := range keys {
 		jwks.Keys = append(jwks.Keys, k.Keys...)
 	}
 
@@ -131,9 +130,7 @@ func (h *Handler) discoverJsonWebKeys(w http.ResponseWriter, r *http.Request) {
 // Get JSON Web Key Request
 //
 // swagger:parameters getJsonWebKey
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type getJsonWebKey struct {
+type _ struct {
 	// JSON Web Key Set ID
 	//
 	// in: path
@@ -164,9 +161,12 @@ type getJsonWebKey struct {
 //	Responses:
 //	  200: jsonWebKeySet
 //	  default: errorOAuth2
-func (h *Handler) getJsonWebKey(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	var setName = ps.ByName("set")
-	var keyName = ps.ByName("key")
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-medium
+func (h *Handler) getJsonWebKey(w http.ResponseWriter, r *http.Request) {
+	var setName = r.PathValue("set")
+	var keyName = r.PathValue("key")
 
 	keys, err := h.r.KeyManager().GetKey(r.Context(), setName, keyName)
 	if err != nil {
@@ -181,9 +181,7 @@ func (h *Handler) getJsonWebKey(w http.ResponseWriter, r *http.Request, ps httpr
 // Get JSON Web Key Set Parameters
 //
 // swagger:parameters getJsonWebKeySet
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type getJsonWebKeySet struct {
+type _ struct {
 	// JSON Web Key Set ID
 	//
 	// in: path
@@ -210,8 +208,11 @@ type getJsonWebKeySet struct {
 //	Responses:
 //	  200: jsonWebKeySet
 //	  default: errorOAuth2
-func (h *Handler) getJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	var setName = ps.ByName("set")
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-medium
+func (h *Handler) getJsonWebKeySet(w http.ResponseWriter, r *http.Request) {
+	var setName = r.PathValue("set")
 
 	keys, err := h.r.KeyManager().GetKeySet(r.Context(), setName)
 	if err != nil {
@@ -226,9 +227,7 @@ func (h *Handler) getJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps ht
 // Create JSON Web Key Set Request
 //
 // swagger:parameters createJsonWebKeySet
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type adminCreateJsonWebKeySet struct {
+type _ struct {
 	// The JSON Web Key Set ID
 	//
 	// in: path
@@ -272,7 +271,7 @@ type createJsonWebKeySetBody struct {
 //
 // # Create JSON Web Key
 //
-// This endpoint is capable of generating JSON Web Key Sets for you. There a different strategies available, such as symmetric cryptographic keys (HS256, HS512) and asymetric cryptographic keys (RS256, ECDSA). If the specified JSON Web Key Set does not exist, it will be created.
+// This endpoint is capable of generating JSON Web Key Sets for you. There are different strategies available, such as symmetric cryptographic keys (HS256, HS512) and asymmetric cryptographic keys (RS256, ECDSA). If the specified JSON Web Key Set does not exist, it will be created.
 //
 // A JSON Web Key (JWK) is a JavaScript Object Notation (JSON) data structure that represents a cryptographic key. A JWK Set is a JSON data structure that represents a set of JWKs. A JSON Web Key is identified by its set and key id. ORY Hydra uses this functionality to store cryptographic keys used for TLS and JSON Web Tokens (such as OpenID Connect ID tokens), and allows storing user-defined keys as well.
 //
@@ -287,18 +286,21 @@ type createJsonWebKeySetBody struct {
 //	Responses:
 //	  201: jsonWebKeySet
 //	  default: errorOAuth2
-func (h *Handler) createJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-high
+func (h *Handler) createJsonWebKeySet(w http.ResponseWriter, r *http.Request) {
 	var keyRequest createJsonWebKeySetBody
-	var set = ps.ByName("set")
+	var set = r.PathValue("set")
 
 	if err := json.NewDecoder(r.Body).Decode(&keyRequest); err != nil {
-		h.r.Writer().WriteError(w, r, errorsx.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
+		h.r.Writer().WriteError(w, r, errors.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
 		return
 	}
 
 	if keys, err := h.r.KeyManager().GenerateAndPersistKeySet(r.Context(), set, keyRequest.KeyID, keyRequest.Algorithm, keyRequest.Use); err == nil {
 		keys = ExcludeOpaquePrivateKeys(keys)
-		h.r.Writer().WriteCreated(w, r, urlx.AppendPaths(h.r.Config().IssuerURL(r.Context()), "/keys/"+set).String(), keys)
+		h.r.Writer().WriteCreated(w, r, urlx.AppendPaths(h.r.Config().IssuerURL(r.Context()), "keys", url.PathEscape(set)).String(), keys)
 	} else {
 		h.r.Writer().WriteError(w, r, err)
 	}
@@ -307,9 +309,7 @@ func (h *Handler) createJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps
 // Set JSON Web Key Set Request
 //
 // swagger:parameters setJsonWebKeySet
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type setJsonWebKeySet struct {
+type _ struct {
 	// The JSON Web Key Set ID
 	//
 	// in: path
@@ -339,12 +339,15 @@ type setJsonWebKeySet struct {
 //	Responses:
 //	  200: jsonWebKeySet
 //	  default: errorOAuth2
-func (h *Handler) setJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-high
+func (h *Handler) setJsonWebKeySet(w http.ResponseWriter, r *http.Request) {
 	var keySet jose.JSONWebKeySet
-	var set = ps.ByName("set")
+	var set = r.PathValue("set")
 
 	if err := json.NewDecoder(r.Body).Decode(&keySet); err != nil {
-		h.r.Writer().WriteError(w, r, errorsx.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
+		h.r.Writer().WriteError(w, r, errors.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
 		return
 	}
 
@@ -359,9 +362,7 @@ func (h *Handler) setJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps ht
 // Set JSON Web Key Request
 //
 // swagger:parameters setJsonWebKey
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type setJsonWebKey struct {
+type _ struct {
 	// The JSON Web Key Set ID
 	//
 	// in: path
@@ -397,12 +398,15 @@ type setJsonWebKey struct {
 //	Responses:
 //	  200: jsonWebKey
 //	  default: errorOAuth2
-func (h *Handler) adminUpdateJsonWebKey(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-high
+func (h *Handler) adminUpdateJsonWebKey(w http.ResponseWriter, r *http.Request) {
 	var key jose.JSONWebKey
-	var set = ps.ByName("set")
+	var set = r.PathValue("set")
 
 	if err := json.NewDecoder(r.Body).Decode(&key); err != nil {
-		h.r.Writer().WriteError(w, r, errorsx.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
+		h.r.Writer().WriteError(w, r, errors.WithStack(herodot.ErrBadRequest.WithReasonf("Unable to decode the request body: %s", err)))
 		return
 	}
 
@@ -417,9 +421,7 @@ func (h *Handler) adminUpdateJsonWebKey(w http.ResponseWriter, r *http.Request, 
 // Delete JSON Web Key Set Parameters
 //
 // swagger:parameters deleteJsonWebKeySet
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type deleteJsonWebKeySet struct {
+type _ struct {
 	// The JSON Web Key Set
 	// in: path
 	// required: true
@@ -445,8 +447,11 @@ type deleteJsonWebKeySet struct {
 //	Responses:
 //	  204: emptyResponse
 //	  default: errorOAuth2
-func (h *Handler) adminDeleteJsonWebKeySet(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	var setName = ps.ByName("set")
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-high
+func (h *Handler) adminDeleteJsonWebKeySet(w http.ResponseWriter, r *http.Request) {
+	var setName = r.PathValue("set")
 
 	if err := h.r.KeyManager().DeleteKeySet(r.Context(), setName); err != nil {
 		h.r.Writer().WriteError(w, r, err)
@@ -459,9 +464,7 @@ func (h *Handler) adminDeleteJsonWebKeySet(w http.ResponseWriter, r *http.Reques
 // Delete JSON Web Key Parameters
 //
 // swagger:parameters deleteJsonWebKey
-//
-//lint:ignore U1000 Used to generate Swagger and OpenAPI definitions
-type deleteJsonWebKey struct {
+type _ struct {
 	// The JSON Web Key Set
 	// in: path
 	// required: true
@@ -496,9 +499,11 @@ type deleteJsonWebKey struct {
 //	Responses:
 //	  204: emptyResponse
 //	  default: errorOAuth2
-func (h *Handler) deleteJsonWebKey(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	var setName = ps.ByName("set")
-	var keyName = ps.ByName("key")
+//
+//	Extensions:
+//	  x-ory-ratelimit-bucket: hydra-admin-high
+func (h *Handler) deleteJsonWebKey(w http.ResponseWriter, r *http.Request) {
+	setName, keyName := r.PathValue("set"), r.PathValue("key")
 
 	if err := h.r.KeyManager().DeleteKey(r.Context(), setName, keyName); err != nil {
 		h.r.Writer().WriteError(w, r, err)
@@ -510,4 +515,4 @@ func (h *Handler) deleteJsonWebKey(w http.ResponseWriter, r *http.Request, ps ht
 
 // This function will not be called, OPTIONS request will be handled by cors
 // this is just a placeholder.
-func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) {}
+func (h *Handler) handleOptions(http.ResponseWriter, *http.Request) {}

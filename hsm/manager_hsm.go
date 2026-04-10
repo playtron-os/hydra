@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //go:build hsm
-// +build hsm
 
 package hsm
 
@@ -16,24 +15,21 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/x/otelx"
-
-	"github.com/pkg/errors"
-
-	"github.com/pborman/uuid"
-
-	"github.com/ory/fosite"
-	"github.com/ory/hydra/v2/jwk"
-
-	"github.com/miekg/pkcs11"
-
-	"github.com/ory/hydra/v2/x"
-
-	"github.com/ThalesIgnite/crypto11"
+	"github.com/ThalesGroup/crypto11"
 	"github.com/go-jose/go-jose/v3"
 	"github.com/go-jose/go-jose/v3/cryptosigner"
+	"github.com/gofrs/uuid"
+	"github.com/miekg/pkcs11"
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/ory/hydra/v2/driver/config"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/jwk"
+	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/otelx"
 )
 
 const tracingComponent = "github.com/ory/hydra/hsm"
@@ -58,29 +54,27 @@ func NewKeyManager(hsm Context, config *config.DefaultProvider) *KeyManager {
 	}
 }
 
-func (m *KeyManager) GenerateAndPersistKeySet(ctx context.Context, set, kid, alg, use string) (*jose.JSONWebKeySet, error) {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GenerateAndPersistKeySet")
-	defer span.End()
-	attrs := map[string]string{
-		"set": set,
-		"kid": kid,
-		"alg": alg,
-		"use": use,
-	}
-	span.SetAttributes(otelx.StringAttrs(attrs)...)
+func (m *KeyManager) GenerateAndPersistKeySet(ctx context.Context, set, kid, alg, use string) (_ *jose.JSONWebKeySet, err error) {
+	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GenerateAndPersistKeySet",
+		trace.WithAttributes(
+			attribute.String("set", set),
+			attribute.String("kid", kid),
+			attribute.String("alg", alg),
+			attribute.String("use", use)))
+	defer otelx.End(span, &err)
 
 	m.Lock()
 	defer m.Unlock()
 
 	set = m.prefixKeySet(set)
 
-	err := m.deleteExistingKeySet(set)
+	err = m.deleteExistingKeySet(set)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(kid) == 0 {
-		kid = uuid.New()
+	if kid == "" {
+		kid = uuid.Must(uuid.NewV4()).String()
 	}
 
 	privateAttrSet, publicAttrSet, err := getKeyPairAttributes(kid, set, use)
@@ -88,20 +82,20 @@ func (m *KeyManager) GenerateAndPersistKeySet(ctx context.Context, set, kid, alg
 		return nil, err
 	}
 
-	switch {
-	case alg == "RS256":
+	switch alg {
+	case "RS256":
 		key, err := m.GenerateRSAKeyPairWithAttributes(publicAttrSet, privateAttrSet, 2048)
 		if err != nil {
 			return nil, err
 		}
 		return createKeySet(key, kid, alg, use)
-	case alg == "ES256":
+	case "ES256":
 		key, err := m.GenerateECDSAKeyPairWithAttributes(publicAttrSet, privateAttrSet, elliptic.P256())
 		if err != nil {
 			return nil, err
 		}
 		return createKeySet(key, kid, alg, use)
-	case alg == "ES512":
+	case "ES512":
 		key, err := m.GenerateECDSAKeyPairWithAttributes(publicAttrSet, privateAttrSet, elliptic.P521())
 		if err != nil {
 			return nil, err
@@ -119,14 +113,10 @@ func (m *KeyManager) GenerateAndPersistKeySet(ctx context.Context, set, kid, alg
 	}
 }
 
-func (m *KeyManager) GetKey(ctx context.Context, set, kid string) (*jose.JSONWebKeySet, error) {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GetKey")
-	defer span.End()
-	attrs := map[string]string{
-		"set": set,
-		"kid": kid,
-	}
-	span.SetAttributes(otelx.StringAttrs(attrs)...)
+func (m *KeyManager) GetKey(ctx context.Context, set, kid string) (_ *jose.JSONWebKeySet, err error) {
+	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GetKey",
+		trace.WithAttributes(attribute.String("set", set), attribute.String("kid", kid)))
+	defer otelx.End(span, &err)
 
 	m.RLock()
 	defer m.RUnlock()
@@ -150,13 +140,9 @@ func (m *KeyManager) GetKey(ctx context.Context, set, kid string) (*jose.JSONWeb
 	return createKeySet(keyPair, id, alg, use)
 }
 
-func (m *KeyManager) GetKeySet(ctx context.Context, set string) (*jose.JSONWebKeySet, error) {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GetKeySet")
-	defer span.End()
-	attrs := map[string]string{
-		"set": set,
-	}
-	span.SetAttributes(otelx.StringAttrs(attrs)...)
+func (m *KeyManager) GetKeySet(ctx context.Context, set string) (_ *jose.JSONWebKeySet, err error) {
+	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.GetKeySet", trace.WithAttributes(attribute.String("set", set)))
+	otelx.End(span, &err)
 
 	m.RLock()
 	defer m.RUnlock()
@@ -186,14 +172,12 @@ func (m *KeyManager) GetKeySet(ctx context.Context, set string) (*jose.JSONWebKe
 	}, nil
 }
 
-func (m *KeyManager) DeleteKey(ctx context.Context, set, kid string) error {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.DeleteKey")
-	defer span.End()
-	attrs := map[string]string{
-		"set": set,
-		"kid": kid,
-	}
-	span.SetAttributes(otelx.StringAttrs(attrs)...)
+func (m *KeyManager) DeleteKey(ctx context.Context, set, kid string) (err error) {
+	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.DeleteKey",
+		trace.WithAttributes(
+			attribute.String("set", set),
+			attribute.String("kid", kid)))
+	defer otelx.End(span, &err)
 
 	m.Lock()
 	defer m.Unlock()
@@ -216,13 +200,9 @@ func (m *KeyManager) DeleteKey(ctx context.Context, set, kid string) error {
 	return nil
 }
 
-func (m *KeyManager) DeleteKeySet(ctx context.Context, set string) error {
-	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.DeleteKeySet")
-	defer span.End()
-	attrs := map[string]string{
-		"set": set,
-	}
-	span.SetAttributes(otelx.StringAttrs(attrs)...)
+func (m *KeyManager) DeleteKeySet(ctx context.Context, set string) (err error) {
+	ctx, span := otel.GetTracerProvider().Tracer(tracingComponent).Start(ctx, "hsm.DeleteKeySet", trace.WithAttributes(attribute.String("set", set)))
+	defer otelx.End(span, &err)
 
 	m.Lock()
 	defer m.Unlock()
@@ -299,8 +279,7 @@ func (m *KeyManager) getKeySetAttributes(ctx context.Context, key crypto11.Signe
 	return string(kid), alg, use, nil
 }
 
-func getKeyPairAttributes(kid string, set string, use string) (crypto11.AttributeSet, crypto11.AttributeSet, error) {
-
+func getKeyPairAttributes(kid, set, use string) (crypto11.AttributeSet, crypto11.AttributeSet, error) {
 	privateAttrSet, err := crypto11.NewAttributeSetWithIDAndLabel([]byte(kid), []byte(set))
 	if err != nil {
 		return nil, nil, err

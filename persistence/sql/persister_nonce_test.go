@@ -11,15 +11,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ory/fosite"
-	"github.com/ory/hydra/v2/internal"
-	"github.com/ory/x/contextx"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/internal/testhelpers"
 	"github.com/ory/x/randx"
 )
 
 func TestPersister_Nonce(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
-	p := internal.NewMockedRegistry(t, new(contextx.Default)).Persister()
+	p := testhelpers.NewRegistryMemory(t).Persister()
 
 	accessToken := randx.MustString(100, randx.AlphaNum)
 	anotherToken := randx.MustString(100, randx.AlphaNum)

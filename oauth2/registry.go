@@ -4,25 +4,29 @@
 package oauth2
 
 import (
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/openid"
 	"github.com/ory/hydra/v2/aead"
 	"github.com/ory/hydra/v2/client"
 	"github.com/ory/hydra/v2/consent"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/handler/openid"
+	"github.com/ory/hydra/v2/fosite/handler/rfc8628"
 	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/oauth2/trust"
-	"github.com/ory/hydra/v2/persistence"
 	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/httpx"
+	"github.com/ory/x/logrusx"
+	"github.com/ory/x/otelx"
 )
 
 type InternalRegistry interface {
 	client.Registry
 	jwk.Registry
 	trust.Registry
-	x.RegistryWriter
-	x.RegistryLogger
+	httpx.WriterProvider
+	logrusx.Provider
+	otelx.Provider
+	x.Transactor
 	consent.Registry
-	persistence.Provider
 	Registry
 	FlowCipher() *aead.XChaCha20Poly1305
 }
@@ -30,9 +34,11 @@ type InternalRegistry interface {
 type Registry interface {
 	OAuth2Storage() x.FositeStorer
 	OAuth2Provider() fosite.OAuth2Provider
-	AudienceStrategy() fosite.AudienceMatchingStrategy
-	AccessTokenJWTStrategy() jwk.JWTSigner
+	AccessTokenJWTSigner() jwk.JWTSigner
 	OpenIDConnectRequestValidator() *openid.OpenIDConnectRequestValidator
 	AccessRequestHooks() []AccessRequestHook
 	OAuth2ProviderConfig() fosite.Configurator
+	rfc8628.DeviceRateLimitStrategyProvider
+	rfc8628.DeviceCodeStrategyProvider
+	rfc8628.UserCodeStrategyProvider
 }

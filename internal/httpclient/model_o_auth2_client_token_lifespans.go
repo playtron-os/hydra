@@ -21,25 +21,31 @@ var _ MappedNullable = &OAuth2ClientTokenLifespans{}
 // OAuth2ClientTokenLifespans Lifespans of different token types issued for this OAuth 2.0 Client.
 type OAuth2ClientTokenLifespans struct {
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	AuthorizationCodeGrantAccessTokenLifespan *string `json:"authorization_code_grant_access_token_lifespan,omitempty"`
+	AuthorizationCodeGrantAccessTokenLifespan *string `json:"authorization_code_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	AuthorizationCodeGrantIdTokenLifespan *string `json:"authorization_code_grant_id_token_lifespan,omitempty"`
+	AuthorizationCodeGrantIdTokenLifespan *string `json:"authorization_code_grant_id_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	AuthorizationCodeGrantRefreshTokenLifespan *string `json:"authorization_code_grant_refresh_token_lifespan,omitempty"`
+	AuthorizationCodeGrantRefreshTokenLifespan *string `json:"authorization_code_grant_refresh_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	ClientCredentialsGrantAccessTokenLifespan *string `json:"client_credentials_grant_access_token_lifespan,omitempty"`
+	ClientCredentialsGrantAccessTokenLifespan *string `json:"client_credentials_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	ImplicitGrantAccessTokenLifespan *string `json:"implicit_grant_access_token_lifespan,omitempty"`
+	DeviceAuthorizationGrantAccessTokenLifespan *string `json:"device_authorization_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	ImplicitGrantIdTokenLifespan *string `json:"implicit_grant_id_token_lifespan,omitempty"`
+	DeviceAuthorizationGrantIdTokenLifespan *string `json:"device_authorization_grant_id_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	JwtBearerGrantAccessTokenLifespan *string `json:"jwt_bearer_grant_access_token_lifespan,omitempty"`
+	DeviceAuthorizationGrantRefreshTokenLifespan *string `json:"device_authorization_grant_refresh_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	RefreshTokenGrantAccessTokenLifespan *string `json:"refresh_token_grant_access_token_lifespan,omitempty"`
+	ImplicitGrantAccessTokenLifespan *string `json:"implicit_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	RefreshTokenGrantIdTokenLifespan *string `json:"refresh_token_grant_id_token_lifespan,omitempty"`
+	ImplicitGrantIdTokenLifespan *string `json:"implicit_grant_id_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 	// Specify a time duration in milliseconds, seconds, minutes, hours.
-	RefreshTokenGrantRefreshTokenLifespan *string `json:"refresh_token_grant_refresh_token_lifespan,omitempty"`
+	JwtBearerGrantAccessTokenLifespan *string `json:"jwt_bearer_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
+	// Specify a time duration in milliseconds, seconds, minutes, hours.
+	RefreshTokenGrantAccessTokenLifespan *string `json:"refresh_token_grant_access_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
+	// Specify a time duration in milliseconds, seconds, minutes, hours.
+	RefreshTokenGrantIdTokenLifespan *string `json:"refresh_token_grant_id_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
+	// Specify a time duration in milliseconds, seconds, minutes, hours.
+	RefreshTokenGrantRefreshTokenLifespan *string `json:"refresh_token_grant_refresh_token_lifespan,omitempty" validate:"regexp=^([0-9]+(ns|us|ms|s|m|h))*$"`
 }
 
 // NewOAuth2ClientTokenLifespans instantiates a new OAuth2ClientTokenLifespans object
@@ -185,6 +191,102 @@ func (o *OAuth2ClientTokenLifespans) HasClientCredentialsGrantAccessTokenLifespa
 // SetClientCredentialsGrantAccessTokenLifespan gets a reference to the given string and assigns it to the ClientCredentialsGrantAccessTokenLifespan field.
 func (o *OAuth2ClientTokenLifespans) SetClientCredentialsGrantAccessTokenLifespan(v string) {
 	o.ClientCredentialsGrantAccessTokenLifespan = &v
+}
+
+// GetDeviceAuthorizationGrantAccessTokenLifespan returns the DeviceAuthorizationGrantAccessTokenLifespan field value if set, zero value otherwise.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantAccessTokenLifespan() string {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantAccessTokenLifespan) {
+		var ret string
+		return ret
+	}
+	return *o.DeviceAuthorizationGrantAccessTokenLifespan
+}
+
+// GetDeviceAuthorizationGrantAccessTokenLifespanOk returns a tuple with the DeviceAuthorizationGrantAccessTokenLifespan field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantAccessTokenLifespanOk() (*string, bool) {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantAccessTokenLifespan) {
+		return nil, false
+	}
+	return o.DeviceAuthorizationGrantAccessTokenLifespan, true
+}
+
+// HasDeviceAuthorizationGrantAccessTokenLifespan returns a boolean if a field has been set.
+func (o *OAuth2ClientTokenLifespans) HasDeviceAuthorizationGrantAccessTokenLifespan() bool {
+	if o != nil && !IsNil(o.DeviceAuthorizationGrantAccessTokenLifespan) {
+		return true
+	}
+
+	return false
+}
+
+// SetDeviceAuthorizationGrantAccessTokenLifespan gets a reference to the given string and assigns it to the DeviceAuthorizationGrantAccessTokenLifespan field.
+func (o *OAuth2ClientTokenLifespans) SetDeviceAuthorizationGrantAccessTokenLifespan(v string) {
+	o.DeviceAuthorizationGrantAccessTokenLifespan = &v
+}
+
+// GetDeviceAuthorizationGrantIdTokenLifespan returns the DeviceAuthorizationGrantIdTokenLifespan field value if set, zero value otherwise.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantIdTokenLifespan() string {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantIdTokenLifespan) {
+		var ret string
+		return ret
+	}
+	return *o.DeviceAuthorizationGrantIdTokenLifespan
+}
+
+// GetDeviceAuthorizationGrantIdTokenLifespanOk returns a tuple with the DeviceAuthorizationGrantIdTokenLifespan field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantIdTokenLifespanOk() (*string, bool) {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantIdTokenLifespan) {
+		return nil, false
+	}
+	return o.DeviceAuthorizationGrantIdTokenLifespan, true
+}
+
+// HasDeviceAuthorizationGrantIdTokenLifespan returns a boolean if a field has been set.
+func (o *OAuth2ClientTokenLifespans) HasDeviceAuthorizationGrantIdTokenLifespan() bool {
+	if o != nil && !IsNil(o.DeviceAuthorizationGrantIdTokenLifespan) {
+		return true
+	}
+
+	return false
+}
+
+// SetDeviceAuthorizationGrantIdTokenLifespan gets a reference to the given string and assigns it to the DeviceAuthorizationGrantIdTokenLifespan field.
+func (o *OAuth2ClientTokenLifespans) SetDeviceAuthorizationGrantIdTokenLifespan(v string) {
+	o.DeviceAuthorizationGrantIdTokenLifespan = &v
+}
+
+// GetDeviceAuthorizationGrantRefreshTokenLifespan returns the DeviceAuthorizationGrantRefreshTokenLifespan field value if set, zero value otherwise.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantRefreshTokenLifespan() string {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantRefreshTokenLifespan) {
+		var ret string
+		return ret
+	}
+	return *o.DeviceAuthorizationGrantRefreshTokenLifespan
+}
+
+// GetDeviceAuthorizationGrantRefreshTokenLifespanOk returns a tuple with the DeviceAuthorizationGrantRefreshTokenLifespan field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *OAuth2ClientTokenLifespans) GetDeviceAuthorizationGrantRefreshTokenLifespanOk() (*string, bool) {
+	if o == nil || IsNil(o.DeviceAuthorizationGrantRefreshTokenLifespan) {
+		return nil, false
+	}
+	return o.DeviceAuthorizationGrantRefreshTokenLifespan, true
+}
+
+// HasDeviceAuthorizationGrantRefreshTokenLifespan returns a boolean if a field has been set.
+func (o *OAuth2ClientTokenLifespans) HasDeviceAuthorizationGrantRefreshTokenLifespan() bool {
+	if o != nil && !IsNil(o.DeviceAuthorizationGrantRefreshTokenLifespan) {
+		return true
+	}
+
+	return false
+}
+
+// SetDeviceAuthorizationGrantRefreshTokenLifespan gets a reference to the given string and assigns it to the DeviceAuthorizationGrantRefreshTokenLifespan field.
+func (o *OAuth2ClientTokenLifespans) SetDeviceAuthorizationGrantRefreshTokenLifespan(v string) {
+	o.DeviceAuthorizationGrantRefreshTokenLifespan = &v
 }
 
 // GetImplicitGrantAccessTokenLifespan returns the ImplicitGrantAccessTokenLifespan field value if set, zero value otherwise.
@@ -400,6 +502,15 @@ func (o OAuth2ClientTokenLifespans) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.ClientCredentialsGrantAccessTokenLifespan) {
 		toSerialize["client_credentials_grant_access_token_lifespan"] = o.ClientCredentialsGrantAccessTokenLifespan
+	}
+	if !IsNil(o.DeviceAuthorizationGrantAccessTokenLifespan) {
+		toSerialize["device_authorization_grant_access_token_lifespan"] = o.DeviceAuthorizationGrantAccessTokenLifespan
+	}
+	if !IsNil(o.DeviceAuthorizationGrantIdTokenLifespan) {
+		toSerialize["device_authorization_grant_id_token_lifespan"] = o.DeviceAuthorizationGrantIdTokenLifespan
+	}
+	if !IsNil(o.DeviceAuthorizationGrantRefreshTokenLifespan) {
+		toSerialize["device_authorization_grant_refresh_token_lifespan"] = o.DeviceAuthorizationGrantRefreshTokenLifespan
 	}
 	if !IsNil(o.ImplicitGrantAccessTokenLifespan) {
 		toSerialize["implicit_grant_access_token_lifespan"] = o.ImplicitGrantAccessTokenLifespan

@@ -21,7 +21,6 @@
         "extra": {
         }
       },
-      "username": "",
       "subject": "foo"
     },
     "extra": {
@@ -35,6 +34,11 @@
   },
   "request": {
     "client_id": "app-client",
+    "requested_scopes": [
+      "offline",
+      "openid",
+      "hydra.*"
+    ],
     "granted_scopes": [
       "offline",
       "openid",

@@ -10,8 +10,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/ory/fosite"
-	"github.com/ory/fosite/token/jwt"
+	"github.com/ory/hydra/v2/fosite"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/hydra/v2/x"
 )
 
@@ -43,9 +43,9 @@ func (p *DefaultProvider) GetRotatedGlobalSecrets(ctx context.Context) ([][]byte
 		return nil, nil
 	}
 
-	var rotated [][]byte
-	for _, secret := range secrets[1:] {
-		rotated = append(rotated, x.HashStringSecret(secret))
+	rotated := make([][]byte, len(secrets)-1)
+	for i, secret := range secrets[1:] {
+		rotated[i] = x.HashStringSecret(secret)
 	}
 
 	return rotated, nil

@@ -1,72 +1,42 @@
 {
-  "ID": "challenge-0013",
-  "NID": "00000000-0000-0000-0000-000000000000",
-  "RequestedScope": [
+  "i": "challenge-0013",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
     "requested_scope-0013_1"
   ],
-  "RequestedAudience": [
+  "ra": [
     "requested_audience-0013_1"
   ],
-  "LoginSkip": true,
-  "Subject": "subject-0013",
-  "OpenIDConnectContext": {
+  "s": "subject-0013",
+  "oc": {
     "display": "display-0013"
   },
-  "Client": null,
-  "ClientID": "",
-  "RequestURL": "http://request/0013",
-  "SessionID": "auth_session-0013",
-  "IdentityProviderSessionID": "",
-  "LoginVerifier": "verifier-0013",
-  "LoginCSRF": "csrf-0013",
-  "LoginInitializedAt": null,
-  "RequestedAt": "0001-01-01T00:00:00Z",
-  "State": 128,
-  "LoginRemember": true,
-  "LoginRememberFor": 13,
-  "LoginExtendSessionLifespan": false,
-  "ACR": "acr-0013",
-  "AMR": [],
-  "ForceSubjectIdentifier": "force_subject_id-0013",
-  "Context": {
+  "ci": "client-0014",
+  "r": "http://request/0013",
+  "si": "auth_session-0013",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0013",
+  "ct": {
     "context": "0013"
   },
-  "LoginWasUsed": true,
-  "LoginError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "LoginAuthenticatedAt": null,
-  "ConsentChallengeID": "challenge-0013",
-  "ConsentSkip": true,
-  "ConsentVerifier": "verifier-0013",
-  "ConsentCSRF": "csrf-0013",
-  "GrantedScope": [
+  "la": null,
+  "dh": null,
+  "cc": "challenge-0013",
+  "cs": true,
+  "gs": [
     "granted_scope-0013_1"
   ],
-  "GrantedAudience": [
+  "ga": [
     "granted_audience-0013_1"
   ],
-  "ConsentRemember": true,
-  "ConsentRememberFor": 13,
-  "ConsentHandledAt": null,
-  "ConsentWasHandled": true,
-  "ConsentError": {
-    "error": "",
-    "error_description": "",
-    "error_hint": "",
-    "status_code": 0,
-    "error_debug": "",
-    "valid": false
-  },
-  "SessionIDToken": {
+  "ce": true,
+  "cf": 13,
+  "ch": null,
+  "cx": null,
+  "st": {
     "session_id_token-0013": "0013"
   },
-  "SessionAccessToken": {
+  "sa": {
     "session_access_token-0013": "0013"
   }
 }

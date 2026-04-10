@@ -4,21 +4,18 @@
 package client
 
 import (
-	"database/sql"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-jose/go-jose/v3"
+	"github.com/gofrs/uuid"
 	"github.com/twmb/murmur3"
 
-	"github.com/gobuffalo/pop/v6"
-	"github.com/gofrs/uuid"
+	"github.com/ory/pop/v6"
 
 	"github.com/ory/hydra/v2/driver/config"
-
-	"github.com/go-jose/go-jose/v3"
-
-	"github.com/ory/fosite"
+	"github.com/ory/hydra/v2/fosite"
 	"github.com/ory/hydra/v2/x"
 	"github.com/ory/x/sqlxx"
 )
@@ -41,14 +38,6 @@ type Client struct {
 	//
 	// The ID is immutable. If no ID is provided, a UUID4 will be generated.
 	ID string `json:"client_id" db:"id"`
-
-	// DEPRECATED: This field is deprecated and will be removed. It serves
-	// no purpose except the database not complaining.
-	PK sql.NullString `json:"-" db:"pk" faker:"-"`
-
-	// DEPRECATED: This field is deprecated and will be removed. It serves
-	// no purpose except the database not complaining.
-	PKDeprecated int64 `json:"-" db:"pk_deprecated"`
 
 	// OAuth 2.0 Client Name
 	//
@@ -79,6 +68,7 @@ type Client struct {
 	// - OpenID Connect Implicit Grant (deprecated!): `implicit`
 	// - Refresh Token Grant: `refresh_token`
 	// - OAuth 2.0 Token Exchange: `urn:ietf:params:oauth:grant-type:jwt-bearer`
+	// - OAuth 2.0 Device Code Grant: `urn:ietf:params:oauth:grant-type:device_code`
 	GrantTypes sqlxx.StringSliceJSONFormat `json:"grant_types" db:"grant_types"`
 
 	// OAuth 2.0 Client Response Types
@@ -125,7 +115,7 @@ type Client struct {
 	// OAuth 2.0 Client Allowed CORS Origins
 	//
 	// One or more URLs (scheme://host[:port]) which are allowed to make CORS requests
-	// to the /oauth/token endpoint. If this array is empty, the sever's CORS origin configuration (`CORS_ALLOWED_ORIGINS`)
+	// to the /oauth/token endpoint. If this array is empty, the server's CORS origin configuration (`CORS_ALLOWED_ORIGINS`)
 	// will be used instead. If this array is set, the allowed origins are appended to the server's CORS origin configuration.
 	// Be aware that environment variable `CORS_ENABLED` MUST be set to `true` for this to work.
 	AllowedCORSOrigins sqlxx.StringSliceJSONFormat `json:"allowed_cors_origins" db:"allowed_cors_origins"`
@@ -281,7 +271,7 @@ type Client struct {
 
 	// OAuth 2.0 Client Metadata
 	//
-	// Use this field to story arbitrary data about the OAuth 2.0 Client. Can not be modified using OpenID Connect Dynamic Client Registration protocol.
+	// Use this field to store arbitrary data about the OAuth 2.0 Client. Can not be modified using OpenID Connect Dynamic Client Registration protocol.
 	Metadata sqlxx.JSONRawMessage `json:"metadata,omitempty" db:"metadata" faker:"-"`
 
 	// OpenID Connect Dynamic Client Registration Access Token
@@ -303,8 +293,8 @@ type Client struct {
 	// OAuth 2.0 Access Token Strategy
 	//
 	// AccessTokenStrategy is the strategy used to generate access tokens.
-	// Valid options are `jwt` and `opaque`. `jwt` is a bad idea, see https://www.ory.sh/docs/hydra/advanced#json-web-tokens
-	// Setting the stragegy here overrides the global setting in `strategies.access_token`.
+	// Valid options are `jwt` and `opaque`. `jwt` is a bad idea, see https://www.ory.sh/docs/oauth2-oidc/jwt-access-token
+	// Setting the strategy here overrides the global setting in `strategies.access_token`.
 	AccessTokenStrategy string `json:"access_token_strategy,omitempty" db:"access_token_strategy" faker:"-"`
 
 	// SkipConsent skips the consent screen for this client. This field can only
@@ -379,6 +369,21 @@ type Lifespans struct {
 	//
 	// The lifespan of a refresh token issued by the OAuth2 2.0 Refresh Token Grant for this OAuth 2.0 Client.
 	RefreshTokenGrantRefreshTokenLifespan x.NullDuration `json:"refresh_token_grant_refresh_token_lifespan,omitempty" db:"refresh_token_grant_refresh_token_lifespan"`
+
+	// OAuth2 2.0 Device Authorization Grant ID Token Lifespan
+	//
+	// The lifespan of an ID token issued by the OAuth2 2.0 Device Authorization Grant for this OAuth 2.0 Client.
+	DeviceAuthorizationGrantIDTokenLifespan x.NullDuration `json:"device_authorization_grant_id_token_lifespan,omitempty" db:"device_authorization_grant_id_token_lifespan"`
+
+	// OAuth2 2.0 Device Authorization Grant Access Token Lifespan
+	//
+	// The lifespan of an access token issued by the OAuth2 2.0 Device Authorization Grant for this OAuth 2.0 Client.
+	DeviceAuthorizationGrantAccessTokenLifespan x.NullDuration `json:"device_authorization_grant_access_token_lifespan,omitempty" db:"device_authorization_grant_access_token_lifespan"`
+
+	// OAuth2 2.0 Device Authorization Grant Device Authorization Lifespan
+	//
+	// The lifespan of a Device Authorization issued by the OAuth2 2.0 Device Authorization Grant for this OAuth 2.0 Client.
+	DeviceAuthorizationGrantRefreshTokenLifespan x.NullDuration `json:"device_authorization_grant_refresh_token_lifespan,omitempty" db:"device_authorization_grant_refresh_token_lifespan"`
 }
 
 func (Client) TableName() string {
@@ -548,6 +553,14 @@ func (c *Client) GetEffectiveLifespan(gt fosite.GrantType, tt fosite.TokenType, 
 			cl = &c.RefreshTokenGrantIDTokenLifespan.Duration
 		} else if tt == fosite.RefreshToken && c.RefreshTokenGrantRefreshTokenLifespan.Valid {
 			cl = &c.RefreshTokenGrantRefreshTokenLifespan.Duration
+		}
+	} else if gt == fosite.GrantTypeDeviceCode {
+		if tt == fosite.AccessToken && c.DeviceAuthorizationGrantAccessTokenLifespan.Valid {
+			cl = &c.DeviceAuthorizationGrantAccessTokenLifespan.Duration
+		} else if tt == fosite.IDToken && c.DeviceAuthorizationGrantIDTokenLifespan.Valid {
+			cl = &c.DeviceAuthorizationGrantIDTokenLifespan.Duration
+		} else if tt == fosite.RefreshToken && c.DeviceAuthorizationGrantRefreshTokenLifespan.Valid {
+			cl = &c.DeviceAuthorizationGrantRefreshTokenLifespan.Duration
 		}
 	}
 

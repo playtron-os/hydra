@@ -10,44 +10,51 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ory/x/httprouterx"
-
-	"github.com/ory/hydra/v2/jwk"
-	"github.com/ory/x/contextx"
-
 	"github.com/go-jose/go-jose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ory/hydra/v2/driver"
 	"github.com/ory/hydra/v2/driver/config"
-	"github.com/ory/hydra/v2/internal"
+	"github.com/ory/hydra/v2/internal/testhelpers"
+	"github.com/ory/hydra/v2/jwk"
 	"github.com/ory/hydra/v2/x"
+	"github.com/ory/x/configx"
+	"github.com/ory/x/dbal"
+	"github.com/ory/x/httprouterx"
+	"github.com/ory/x/urlx"
 )
 
 func TestHandlerWellKnown(t *testing.T) {
 	t.Parallel()
 
-	conf := internal.NewConfigurationWithDefaults()
-	reg := internal.NewRegistryMemory(t, conf, &contextx.Default{})
-	conf.MustSet(context.Background(), config.KeyWellKnownKeys, []string{x.OpenIDConnectKeyName, x.OpenIDConnectKeyName})
-	router := x.NewRouterPublic()
-	h := reg.KeyHandler()
-	h.SetRoutes(httprouterx.NewRouterAdminWithPrefixAndRouter(router.Router, "/admin", conf.AdminURL), router, func(h http.Handler) http.Handler {
-		return h
-	})
-	testServer := httptest.NewServer(router)
 	JWKPath := "/.well-known/jwks.json"
 
 	t.Run("Test_Handler_WellKnown/Run_public_key_With_public_prefix", func(t *testing.T) {
 		t.Parallel()
-		if conf.HSMEnabled() {
+
+		dsn := dbal.NewSQLiteTestDatabase(t)
+		var testServer *httptest.Server
+		{
+			reg := testhelpers.NewRegistrySQLFromURL(t, dsn, true, true, driver.WithConfigOptions(configx.WithValue(config.KeyWellKnownKeys, []string{x.OpenIDConnectKeyName, x.OpenIDConnectKeyName})))
+			router := httprouterx.NewTestRouterPublic(t)
+			h := jwk.NewHandler(reg)
+			h.SetPublicRoutes(router, func(h http.Handler) http.Handler {
+				return h
+			})
+			testServer = httptest.NewServer(router)
+			t.Cleanup(testServer.Close)
+		}
+
+		reg := testhelpers.NewRegistrySQLFromURL(t, dsn, false, true, driver.WithConfigOptions(configx.WithValue(config.KeyWellKnownKeys, []string{x.OpenIDConnectKeyName, x.OpenIDConnectKeyName})))
+		if reg.Config().HSMEnabled() {
 			t.Skip("Skipping test. Not applicable when Hardware Security Module is enabled. Public/private keys on HSM are generated with equal key id's and are not using prefixes")
 		}
-		IDKS, _ := jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-1", "sig")
+		IDKS, _ := jwk.GenerateJWK(jose.RS256, "test-id-1", "sig")
 		require.NoError(t, reg.KeyManager().AddKeySet(context.TODO(), x.OpenIDConnectKeyName, IDKS))
-		res, err := http.Get(testServer.URL + JWKPath)
+		res, err := http.Get(urlx.MustJoin(testServer.URL, JWKPath))
 		require.NoError(t, err, "problem in http request")
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 
 		var known jose.JSONWebKeySet
 		err = json.NewDecoder(res.Body).Decode(&known)
@@ -66,28 +73,43 @@ func TestHandlerWellKnown(t *testing.T) {
 
 	t.Run("Test_Handler_WellKnown/Run_public_key_Without_public_prefix", func(t *testing.T) {
 		t.Parallel()
+
+		dsn := dbal.NewSQLiteTestDatabase(t)
+		var testServer *httptest.Server
+		{
+			reg := testhelpers.NewRegistrySQLFromURL(t, dsn, true, true, driver.WithConfigOptions(configx.WithValue(config.KeyWellKnownKeys, []string{x.OpenIDConnectKeyName, x.OpenIDConnectKeyName})))
+			router := httprouterx.NewTestRouterPublic(t)
+			h := jwk.NewHandler(reg)
+			h.SetPublicRoutes(router, func(h http.Handler) http.Handler {
+				return h
+			})
+			testServer = httptest.NewServer(router)
+			t.Cleanup(testServer.Close)
+		}
+
+		reg := testhelpers.NewRegistrySQLFromURL(t, dsn, false, true, driver.WithConfigOptions(configx.WithValue(config.KeyWellKnownKeys, []string{x.OpenIDConnectKeyName, x.OpenIDConnectKeyName})))
 		var IDKS *jose.JSONWebKeySet
 
-		if conf.HSMEnabled() {
+		if reg.Config().HSMEnabled() {
 			var err error
 			IDKS, err = reg.KeyManager().GenerateAndPersistKeySet(context.TODO(), x.OpenIDConnectKeyName, "test-id-2", "RS256", "sig")
 			require.NoError(t, err, "problem in generating keys")
 		} else {
 			var err error
-			IDKS, err = jwk.GenerateJWK(context.Background(), jose.RS256, "test-id-2", "sig")
+			IDKS, err = jwk.GenerateJWK(jose.RS256, "test-id-2", "sig")
 			require.NoError(t, err, "problem in generating keys")
 			IDKS.Keys[0].KeyID = "test-id-2"
 			require.NoError(t, reg.KeyManager().AddKeySet(context.TODO(), x.OpenIDConnectKeyName, IDKS))
 		}
 
-		res, err := http.Get(testServer.URL + JWKPath)
+		res, err := http.Get(urlx.MustJoin(testServer.URL, JWKPath))
 		require.NoError(t, err, "problem in http request")
-		defer res.Body.Close()
+		defer res.Body.Close() //nolint:errcheck
 
 		var known jose.JSONWebKeySet
 		err = json.NewDecoder(res.Body).Decode(&known)
 		require.NoError(t, err, "problem in decoding response")
-		if conf.HSMEnabled() {
+		if reg.Config().HSMEnabled() {
 			require.GreaterOrEqual(t, len(known.Keys), 2)
 		} else {
 			require.GreaterOrEqual(t, len(known.Keys), 1)

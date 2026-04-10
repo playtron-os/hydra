@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/julienschmidt/httprouter"
-	"github.com/ory/fosite/token/jwt"
 	"github.com/ory/herodot"
+	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/x/errorsx"
 	"github.com/ory/x/httprouterx"
 )
@@ -39,7 +38,7 @@ type IssueTokenResponse struct {
 	Token string `json:"token"`
 }
 
-func (h *Handler) issueToken(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+func (h *Handler) issueToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req IssueTokenRequest

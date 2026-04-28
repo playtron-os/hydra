@@ -457,19 +457,30 @@ func (h *Handler) acceptOAuth2LoginRequest(w http.ResponseWriter, r *http.Reques
 		h.r.Writer().WriteError(w, r, err)
 		return
 	} else if f.Subject != "" && payload.Subject != f.Subject {
-		// The subject that was confirmed by the login screen does not match what we
-		// remembered in the session cookie. We handle this gracefully by redirecting the
-		// original authorization request URL, but attaching "prompt=login" to the query.
-		// This forces the user to log in again.
-		requestURL, err := url.Parse(f.RequestURL)
-		if err != nil {
-			h.r.Writer().WriteError(w, r, err)
+		if f.DeviceCodeRequestID != "" {
+			// Device flow: accept the new subject instead of redirecting with
+			// prompt=login. For device flows the RequestURL points to the
+			// /oauth2/device/verify endpoint, and restarting with prompt=login
+			// would require a fresh device code, creating an infinite loop.
+			// The user just re-authenticated, so we trust the new identity and
+			// update the session accordingly.
+			f.Subject = payload.Subject
+			f.LoginSkip = false
+		} else {
+			// The subject that was confirmed by the login screen does not match what we
+			// remembered in the session cookie. We handle this gracefully by redirecting the
+			// original authorization request URL, but attaching "prompt=login" to the query.
+			// This forces the user to log in again.
+			requestURL, err := url.Parse(f.RequestURL)
+			if err != nil {
+				h.r.Writer().WriteError(w, r, err)
+				return
+			}
+			h.r.Writer().Write(w, r, &flow.OAuth2RedirectTo{
+				RedirectTo: urlx.SetQuery(requestURL, url.Values{"prompt": {"login"}}).String(),
+			})
 			return
 		}
-		h.r.Writer().Write(w, r, &flow.OAuth2RedirectTo{
-			RedirectTo: urlx.SetQuery(requestURL, url.Values{"prompt": {"login"}}).String(),
-		})
-		return
 	}
 
 	if f.LoginSkip {

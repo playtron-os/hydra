@@ -4,10 +4,12 @@
 package jwt_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	. "github.com/ory/hydra/v2/fosite/token/jwt"
 )
@@ -46,7 +48,7 @@ func TestIDTokenClaimsToMap(t *testing.T) {
 		"iat":       idTokenClaims.IssuedAt.Unix(),
 		"rat":       idTokenClaims.RequestedAt.Unix(),
 		"iss":       idTokenClaims.Issuer,
-		"aud":       idTokenClaims.Audience,
+		"aud":       "tests",
 		"exp":       idTokenClaims.ExpiresAt.Unix(),
 		"foo":       idTokenClaims.Extra["foo"],
 		"baz":       idTokenClaims.Extra["baz"],
@@ -64,7 +66,7 @@ func TestIDTokenClaimsToMap(t *testing.T) {
 		"iat":       idTokenClaims.IssuedAt.Unix(),
 		"rat":       idTokenClaims.RequestedAt.Unix(),
 		"iss":       idTokenClaims.Issuer,
-		"aud":       idTokenClaims.Audience,
+		"aud":       "tests",
 		"exp":       idTokenClaims.ExpiresAt.Unix(),
 		"foo":       idTokenClaims.Extra["foo"],
 		"baz":       idTokenClaims.Extra["baz"],
@@ -75,4 +77,34 @@ func TestIDTokenClaimsToMap(t *testing.T) {
 		"amr":       idTokenClaims.AuthenticationMethodsReferences,
 		"nonce":     idTokenClaims.Nonce,
 	}, idTokenClaims.ToMap())
+}
+
+func TestIDTokenAudience(t *testing.T) {
+	for _, tc := range []struct {
+		aud  IDTokenAudience
+		json string
+		m    interface{}
+	}{
+		{IDTokenAudience{"wallet"}, `"wallet"`, "wallet"},
+		{IDTokenAudience{"a", "b"}, `["a","b"]`, []string{"a", "b"}},
+		{nil, `null`, []string{}},
+	} {
+		b, err := json.Marshal(tc.aud)
+		require.NoError(t, err)
+		assert.JSONEq(t, tc.json, string(b))
+		assert.Equal(t, tc.m, (&IDTokenClaims{Audience: tc.aud}).ToMap()["aud"])
+	}
+
+	// Sessions stored by Hydra v2.2 hold a string, those stored by v26.2 before this change an array.
+	for in, want := range map[string]IDTokenAudience{
+		`{"aud":"wallet"}`:   {"wallet"},
+		`{"aud":["wallet"]}`: {"wallet"},
+		`{"aud":["a","b"]}`:  {"a", "b"},
+		`{"aud":""}`:         nil,
+		`{"aud":null}`:       nil,
+	} {
+		var c IDTokenClaims
+		require.NoError(t, json.Unmarshal([]byte(in), &c), in)
+		assert.Equal(t, want, c.Audience, in)
+	}
 }

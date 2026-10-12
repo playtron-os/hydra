@@ -220,7 +220,7 @@ func TestAuthCodeWithDefaultStrategy(t *testing.T) {
 				assert.EqualValuesf(t, "pwd", claims.Get("amr.0").String(), "%s", claims)
 
 				require.Lenf(t, claims.Get("aud").Array(), 1, "%s", claims)
-				assert.EqualValuesf(t, c.ClientID, claims.Get("aud.0").String(), "%s", claims)
+				assert.EqualValuesf(t, c.ClientID, claims.Get("aud").Str, "%s", claims)
 				assert.EqualValuesf(t, expectedSubject, claims.Get("sub").String(), "%s", claims)
 				assert.EqualValuesf(t, expectedNonce, claims.Get("nonce").String(), "%s", claims)
 				assert.EqualValuesf(t, `baz`, claims.Get("bar").String(), "%s", claims)

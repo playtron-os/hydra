@@ -681,8 +681,14 @@ func (h *Handler) getOidcUserInfo(w http.ResponseWriter, r *http.Request) {
 	delete(interim, "sid")
 	delete(interim, "jti")
 
-	aud, ok := interim["aud"].([]string)
-	if !ok || len(aud) == 0 {
+	var aud []string
+	switch v := interim["aud"].(type) {
+	case string:
+		aud = []string{v}
+	case []string:
+		aud = v
+	}
+	if len(aud) == 0 {
 		aud = []string{c.GetID()}
 	} else {
 		found := false
@@ -696,7 +702,12 @@ func (h *Handler) getOidcUserInfo(w http.ResponseWriter, r *http.Request) {
 			aud = append(aud, c.GetID())
 		}
 	}
-	interim["aud"] = aud
+	// A single audience is a plain string, like the ID token's (jwt.IDTokenAudience).
+	if len(aud) == 1 {
+		interim["aud"] = aud[0]
+	} else {
+		interim["aud"] = aud
+	}
 
 	if c.UserinfoSignedResponseAlg == "RS256" {
 		interim["jti"] = uuid.New()

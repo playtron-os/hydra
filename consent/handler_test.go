@@ -62,10 +62,42 @@ func TestGetLogoutRequest(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, http.StatusOK, resp.StatusCode)
 
+		body := ioutilx.MustReadAll(resp.Body)
 		var result flow.LogoutRequest
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		require.NoError(t, json.Unmarshal(body, &result))
 		assert.Equal(t, challenge, result.ID)
 		assert.Equal(t, requestURL, result.RequestURL)
+		assert.Equal(t, cl.ID, result.Client.ID)
+
+		// Unset, they are left out, as Hydra v2.2 did; the backend's .NET client fails on null.
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(body, &fields))
+		assert.NotContains(t, fields, "expires_at")
+		assert.NotContains(t, fields, "requested_at")
+	})
+
+	t.Run("logout request with times", func(t *testing.T) {
+		challenge := "test-challenge-times"
+		now := time.Now().UTC().Truncate(time.Second)
+		require.NoError(t, reg.LogoutManager().CreateLogoutRequest(t.Context(), &flow.LogoutRequest{
+			Client:      cl,
+			ID:          challenge,
+			RequestURL:  requestURL,
+			Verifier:    uuidx.NewV4().String(),
+			SessionID:   "test-session-id",
+			Subject:     "test-subject",
+			RequestedAt: sqlxx.NullTime(now),
+			ExpiresAt:   sqlxx.NullTime(now.Add(time.Hour)),
+		}))
+
+		resp, err := ts.Client().Get(ts.URL + "/admin" + LogoutPath + "?challenge=" + challenge)
+		require.NoError(t, err)
+		require.EqualValues(t, http.StatusOK, resp.StatusCode)
+
+		var result flow.LogoutRequest
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+		assert.True(t, time.Time(result.RequestedAt).Equal(now))
+		assert.True(t, time.Time(result.ExpiresAt).Equal(now.Add(time.Hour)))
 	})
 
 	t.Run("handled logout request", func(t *testing.T) {

@@ -1,2 +1,7 @@
 ignore:
   - vulnerability: CVE-2023-2650
+  # No fixed pgproto3/v2 exists. Only pop's DSN parsing and oryx's error type checks use the pgx v4 packages;
+  # connections go through pgx/v5, so this parser never reads a server message.
+  - vulnerability: GHSA-jqcq-xjh3-6g23
+    package:
+      name: github.com/jackc/pgproto3/v2

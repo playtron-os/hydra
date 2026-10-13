@@ -22,7 +22,7 @@ ARG VERSION=master
 ARG COMMIT=undefined
 ARG BUILD_DATE=undefined
 
-RUN go build -tags sqlite,sqlite_omit_load_extension -o /usr/bin/hydra \
+RUN go build -buildvcs=false -tags sqlite,sqlite_omit_load_extension -o /usr/bin/hydra \
   -ldflags="-extldflags=-static -X github.com/ory/hydra/v2/driver/config.Version=${VERSION} -X github.com/ory/hydra/v2/driver/config.Commit=${COMMIT} -X github.com/ory/hydra/v2/driver/config.Date=${BUILD_DATE}"
 
 #########################

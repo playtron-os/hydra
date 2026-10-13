@@ -60,7 +60,7 @@ func TestKeyManager_HsmKeySetPrefix(t *testing.T) {
 	c.MustSet(context.Background(), config.HSMKeySetPrefix, keySetPrefix)
 	m := hsm.NewKeyManager(hsmContext, c)
 
-	rsaKey3072, err := rsa.GenerateKey(rand.Reader, 3072)
+	rsaKey1024, err := rsa.GenerateKey(rand.Reader, 1024)
 	require.NoError(t, err)
 	rsaKey4096, err := rsa.GenerateKey(rand.Reader, 4096)
 	require.NoError(t, err)
@@ -68,8 +68,8 @@ func TestKeyManager_HsmKeySetPrefix(t *testing.T) {
 	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	require.NoError(t, err)
 
-	rsaKeyPair3072 := NewMockSignerDecrypter(ctrl)
-	rsaKeyPair3072.EXPECT().Public().Return(&rsaKey3072.PublicKey).AnyTimes()
+	rsaKeyPair1024 := NewMockSignerDecrypter(ctrl)
+	rsaKeyPair1024.EXPECT().Public().Return(&rsaKey1024.PublicKey).AnyTimes()
 
 	rsaKeyPair4096 := NewMockSignerDecrypter(ctrl)
 	rsaKeyPair4096.EXPECT().Public().Return(&rsaKey4096.PublicKey).AnyTimes()
@@ -84,7 +84,7 @@ func TestKeyManager_HsmKeySetPrefix(t *testing.T) {
 	t.Run("case=GenerateAndPersistKeySet", func(t *testing.T) {
 		privateAttrSet, publicAttrSet := expectedKeyAttributes(t, expectedPrefixedOpenIDConnectKeyName, kid)
 		hsmContext.EXPECT().FindKeyPairs(gomock.Nil(), gomock.Eq([]byte(expectedPrefixedOpenIDConnectKeyName))).Return(nil, nil)
-		hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(4096)).Return(rsaKeyPair4096, nil)
+		hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(2048)).Return(rsaKeyPair4096, nil)
 
 		got, err := m.GenerateAndPersistKeySet(context.TODO(), x.OpenIDConnectKeyName, kid, "RS256", "sig")
 
@@ -107,7 +107,7 @@ func TestKeyManager_HsmKeySetPrefix(t *testing.T) {
 		}
 	})
 	t.Run("case=GetKeyMinimalRsaKeyLengthError", func(t *testing.T) {
-		hsmContext.EXPECT().FindKeyPair(gomock.Eq([]byte(kid)), gomock.Eq([]byte(expectedPrefixedOpenIDConnectKeyName))).Return(rsaKeyPair3072, nil)
+		hsmContext.EXPECT().FindKeyPair(gomock.Eq([]byte(kid)), gomock.Eq([]byte(expectedPrefixedOpenIDConnectKeyName))).Return(rsaKeyPair1024, nil)
 
 		_, err := m.GetKey(context.TODO(), x.OpenIDConnectKeyName, kid)
 
@@ -127,8 +127,8 @@ func TestKeyManager_HsmKeySetPrefix(t *testing.T) {
 		}
 	})
 	t.Run("case=GetKeySetMinimalRsaKeyLengthError", func(t *testing.T) {
-		hsmContext.EXPECT().FindKeyPairs(gomock.Nil(), gomock.Eq([]byte(expectedPrefixedOpenIDConnectKeyName))).Return([]crypto11.Signer{rsaKeyPair3072}, nil)
-		hsmContext.EXPECT().GetAttribute(gomock.Eq(rsaKeyPair3072), gomock.Eq(crypto11.CkaId)).Return(pkcs11.NewAttribute(pkcs11.CKA_ID, []byte(kid)), nil)
+		hsmContext.EXPECT().FindKeyPairs(gomock.Nil(), gomock.Eq([]byte(expectedPrefixedOpenIDConnectKeyName))).Return([]crypto11.Signer{rsaKeyPair1024}, nil)
+		hsmContext.EXPECT().GetAttribute(gomock.Eq(rsaKeyPair1024), gomock.Eq(crypto11.CkaId)).Return(pkcs11.NewAttribute(pkcs11.CKA_ID, []byte(kid)), nil)
 
 		_, err := m.GetKeySet(context.TODO(), x.OpenIDConnectKeyName)
 
@@ -201,7 +201,7 @@ func TestKeyManager_GenerateAndPersistKeySet(t *testing.T) {
 			setup: func(t *testing.T) {
 				privateAttrSet, publicAttrSet := expectedKeyAttributes(t, x.OpenIDConnectKeyName, kid)
 				hsmContext.EXPECT().FindKeyPairs(gomock.Nil(), gomock.Eq([]byte(x.OpenIDConnectKeyName))).Return(nil, nil)
-				hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(4096)).Return(rsaKeyPair, nil)
+				hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(2048)).Return(rsaKeyPair, nil)
 			},
 			want: expectedKeySet(rsaKeyPair, kid, "RS256", "sig"),
 		},
@@ -217,7 +217,7 @@ func TestKeyManager_GenerateAndPersistKeySet(t *testing.T) {
 			setup: func(t *testing.T) {
 				privateAttrSet, publicAttrSet := expectedKeyAttributes(t, x.OpenIDConnectKeyName, kid)
 				hsmContext.EXPECT().FindKeyPairs(gomock.Nil(), gomock.Eq([]byte(x.OpenIDConnectKeyName))).Return(nil, nil)
-				hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(4096)).Return(nil, errors.New("GenerateRSAKeyPairWithAttributesError"))
+				hsmContext.EXPECT().GenerateRSAKeyPairWithAttributes(gomock.Eq(publicAttrSet), gomock.Eq(privateAttrSet), gomock.Eq(2048)).Return(nil, errors.New("GenerateRSAKeyPairWithAttributesError"))
 			},
 			wantErrMsg: "GenerateRSAKeyPairWithAttributesError",
 		},

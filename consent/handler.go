@@ -1021,7 +1021,26 @@ func (h *Handler) getOAuth2LogoutRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.r.Writer().Write(w, r, request)
+	h.r.Writer().Write(w, r, withoutNullTimes(request))
+}
+
+// withoutNullTimes leaves out a logout request's unset expires_at and requested_at, as Hydra v2.2 did: Playtron's
+// .NET client reads them as DateTime and fails on null.
+func withoutNullTimes(request *flow.LogoutRequest) any {
+	b, err := json.Marshal(request)
+	if err != nil {
+		return request
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return request
+	}
+	for _, k := range []string{"expires_at", "requested_at"} {
+		if string(fields[k]) == "null" {
+			delete(fields, k)
+		}
+	}
+	return fields
 }
 
 // Verify OAuth 2.0 User Code Request

@@ -252,6 +252,6 @@ func AssertAccessToken(t *testing.T, token gjson.Result, sub, clientID string) {
 
 func AssertIDToken(t *testing.T, token gjson.Result, sub, clientID string) {
 	AssertTokenValid(t, token, sub)
-	assert.Equalf(t, clientID, token.Get("aud.0").Str, "%s", token.Raw)
+	assert.Equalf(t, clientID, token.Get("aud").Str, "%s", token.Raw)
 	assert.WithinDurationf(t, time.Now(), time.Unix(token.Get("rat").Int(), 0), time.Minute, "%s", token.Raw)
 }

@@ -194,7 +194,8 @@ func TestAuthCodeFlowE2E(t *testing.T) {
 					idToken := testhelpers.DecodeIDToken(t, token)
 					testhelpers.AssertIDToken(t, idToken, sub, cl.ID)
 					require.Len(t, idToken.Get("aud").Array(), 1)
-					assert.Equal(t, cl.ID, idToken.Get("aud.0").Str)
+					// A single audience is a plain string (jwt.IDTokenAudience).
+					assert.Equal(t, cl.ID, idToken.Get("aud").Str)
 				})
 			})
 		}

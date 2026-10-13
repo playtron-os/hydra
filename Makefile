@@ -54,7 +54,9 @@ test-resetdb:
 # Build local docker images
 .PHONY: docker
 docker:
-	DOCKER_CONTENT_TRUST=1 docker build --progress=plain -f .docker/Dockerfile-local-build -t oryd/hydra:${IMAGE_TAG} .
+	DOCKER_CONTENT_TRUST=1 docker build --progress=plain -f .docker/Dockerfile-local-build \
+		--build-arg=VERSION=${IMAGE_TAG} --build-arg=COMMIT=$$(git rev-parse HEAD) --build-arg=BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		-t oryd/hydra:${IMAGE_TAG} .
 	echo "Local development image has been built."
 
 .PHONY: e2e

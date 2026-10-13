@@ -4,17 +4,46 @@
 package jwt
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// IDTokenAudience is an ID token's aud. Playtron's Hydra issues and stores a single audience as a plain string, as
+// Sui zkLogin requires and as v2.2 did; it reads both forms, so sessions stored by either version stay readable.
+type IDTokenAudience []string
+
+func (a IDTokenAudience) MarshalJSON() ([]byte, error) {
+	if len(a) == 1 {
+		return json.Marshal(a[0])
+	}
+	return json.Marshal([]string(a))
+}
+
+func (a *IDTokenAudience) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*a = nil
+		if one != "" {
+			*a = IDTokenAudience{one}
+		}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*a = many
+	return nil
+}
 
 // IDTokenClaims represent the claims used in open id connect requests
 type IDTokenClaims struct {
 	JTI                                 string                 `json:"jti"`
 	Issuer                              string                 `json:"iss"`
 	Subject                             string                 `json:"sub"`
-	Audience                            []string               `json:"aud"`
+	Audience                            IDTokenAudience        `json:"aud"`
 	Nonce                               string                 `json:"nonce"`
 	ExpiresAt                           time.Time              `json:"exp"`
 	IssuedAt                            time.Time              `json:"iat"`
@@ -49,10 +78,13 @@ func (c *IDTokenClaims) ToMap() map[string]interface{} {
 		ret["jti"] = uuid.New().String()
 	}
 
-	if len(c.Audience) > 0 {
-		ret["aud"] = c.Audience
-	} else {
+	switch len(c.Audience) {
+	case 0:
 		ret["aud"] = []string{}
+	case 1:
+		ret["aud"] = c.Audience[0]
+	default:
+		ret["aud"] = []string(c.Audience)
 	}
 
 	if !c.IssuedAt.IsZero() {

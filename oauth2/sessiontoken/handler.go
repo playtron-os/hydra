@@ -1,3 +1,6 @@
+// Copyright © 2026 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
 package sessiontoken
 
 import (
@@ -7,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/ory/herodot"
 	"github.com/ory/hydra/v2/fosite/token/jwt"
 	"github.com/ory/x/errorsx"
